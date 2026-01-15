@@ -3,6 +3,8 @@ import { getDb } from '../db';
 import { sdk } from '../_core/sdk';
 import { COOKIE_NAME, ONE_YEAR_MS } from '@shared/const';
 import { getSessionCookieOptions } from '../_core/cookies';
+import axios from 'axios';
+import https from 'https';
 
 const router = Router();
 
@@ -43,8 +45,17 @@ router.post('/login', async (req: Request, res: Response) => {
     console.log('[WeChat Login] Calling WeChat API with AppID:', WX_APPID);
     console.log('[WeChat Login] Code length:', code?.length || 0);
     
-    const wxResponse = await fetch(wxApiUrl);
-    const wxData = await wxResponse.json();
+    // 使用 axios 替代 fetch，解决 SSL 证书验证问题
+    // 在云托管环境中，可能需要忽略 SSL 证书验证
+    const httpsAgent = new https.Agent({
+      rejectUnauthorized: false, // 在云托管环境中可能需要设置为 false
+    });
+    
+    const wxResponse = await axios.get(wxApiUrl, {
+      httpsAgent,
+      timeout: 10000, // 10秒超时
+    });
+    const wxData = wxResponse.data;
 
     if (wxData.errcode) {
       console.error('[WeChat Login] WeChat API error:', {

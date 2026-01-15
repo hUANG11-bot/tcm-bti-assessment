@@ -1,0 +1,20 @@
+@import '../../styles/variables.scss';
+
+.input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.8);
+  border: 2rpx solid $border-color;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  font-size: 32rpx;
+  color: $text-primary;
+  
+  &:focus {
+    border-color: $primary-color;
+    outline: none;
+  }
+  
+  &::placeholder {
+    color: $text-muted;
+  }
+}

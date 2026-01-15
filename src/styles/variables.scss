@@ -1,0 +1,39 @@
+// 主题颜色变量
+$primary-color: #8FBC8F;
+$accent-color: #8FBC8F;
+$text-primary: #2d3748;
+$text-muted: #718096;
+$bg-color: #fcfcfc;
+$border-color: #e2e8f0;
+$destructive-color: #ef4444;
+
+// 间距变量
+$spacing-xs: 8rpx;
+$spacing-sm: 16rpx;
+$spacing-md: 24rpx;
+$spacing-lg: 32rpx;
+$spacing-xl: 48rpx;
+
+// 字体大小
+$font-size-xs: 24rpx;
+$font-size-sm: 28rpx;
+$font-size-md: 32rpx;
+$font-size-lg: 36rpx;
+$font-size-xl: 48rpx;
+$font-size-2xl: 64rpx;
+
+// 圆角
+$border-radius-sm: 8rpx;
+$border-radius-md: 16rpx;
+$border-radius-lg: 24rpx;
+$border-radius-full: 50rpx;
+
+// 阴影
+$shadow-sm: 0 2rpx 8rpx rgba(0, 0, 0, 0.05);
+$shadow-md: 0 4rpx 12rpx rgba(0, 0, 0, 0.1);
+$shadow-lg: 0 8rpx 24rpx rgba(0, 0, 0, 0.15);
+
+// 过渡
+$transition-fast: 0.15s;
+$transition-base: 0.2s;
+$transition-slow: 0.3s;

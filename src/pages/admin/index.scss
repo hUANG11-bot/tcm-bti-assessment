@@ -1,0 +1,164 @@
+@import '../../styles/variables.scss';
+
+.admin-page {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #fcfcfc 0%, #ffffff 100%);
+}
+
+.admin-container {
+  padding: 40rpx 30rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 40rpx;
+}
+
+.page-header {
+  text-align: center;
+  margin-bottom: 20rpx;
+}
+
+.page-title {
+  font-size: 64rpx;
+  font-weight: bold;
+  color: $text-primary;
+  display: block;
+  margin-bottom: 16rpx;
+}
+
+.page-subtitle {
+  font-size: 32rpx;
+  color: $text-muted;
+  display: block;
+}
+
+.loading-state,
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  gap: 40rpx;
+}
+
+.loading-text,
+.empty-title {
+  font-size: 48rpx;
+  color: #2d3748;
+  font-weight: bold;
+}
+
+.empty-text {
+  font-size: 32rpx;
+  color: #718096;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24rpx;
+}
+
+.stat-value {
+  font-size: 64rpx;
+  font-weight: bold;
+  color: #8FBC8F;
+  display: block;
+}
+
+.distribution-list {
+  display: flex;
+  flex-direction: column;
+  gap: 24rpx;
+}
+
+.distribution-item {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.distribution-name {
+  font-size: 28rpx;
+  color: #2d3748;
+  min-width: 120rpx;
+}
+
+.distribution-bar-wrapper {
+  flex: 1;
+  height: 32rpx;
+  background: rgba(242, 242, 242, 0.8);
+  border-radius: 16rpx;
+  overflow: hidden;
+}
+
+.distribution-bar {
+  height: 100%;
+  background: #8FBC8F;
+  transition: width 0.3s;
+}
+
+.distribution-value {
+  font-size: 28rpx;
+  font-weight: bold;
+  color: #2d3748;
+  min-width: 60rpx;
+  text-align: right;
+}
+
+.gender-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 32rpx;
+}
+
+.gender-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16rpx;
+  padding: 32rpx;
+  background: rgba(242, 242, 242, 0.5);
+  border-radius: 16rpx;
+}
+
+.gender-name {
+  font-size: 32rpx;
+  color: #2d3748;
+  font-weight: 500;
+}
+
+.gender-value {
+  font-size: 48rpx;
+  font-weight: bold;
+  color: #8FBC8F;
+}
+
+.assessments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.assessment-item {
+  padding: 24rpx;
+  background: rgba(242, 242, 242, 0.5);
+  border-radius: 12rpx;
+}
+
+.assessment-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.assessment-type {
+  font-size: 32rpx;
+  font-weight: bold;
+  color: #2d3748;
+}
+
+.assessment-meta {
+  font-size: 24rpx;
+  color: #718096;
+}

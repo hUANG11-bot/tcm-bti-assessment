@@ -1,0 +1,150 @@
+.profile-page {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #fcfcfc 0%, #ffffff 100%);
+}
+
+.profile-container {
+  padding: 40rpx 30rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 40rpx;
+}
+
+.loading-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-size: 32rpx;
+  color: #718096;
+}
+
+.user-info-card {
+  margin-bottom: 20rpx;
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 32rpx;
+  padding: 20rpx 0;
+}
+
+.user-avatar {
+  width: 120rpx;
+  height: 120rpx;
+  border-radius: 50%;
+  border: 4rpx solid #e2e8f0;
+}
+
+.user-details {
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+  flex: 1;
+}
+
+.user-name {
+  font-size: 40rpx;
+  font-weight: bold;
+  color: #2d3748;
+}
+
+.user-email {
+  font-size: 28rpx;
+  color: #718096;
+}
+
+.user-id {
+  font-size: 24rpx;
+  color: #a0aec0;
+}
+
+.not-logged-in {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60rpx 0;
+  gap: 24rpx;
+}
+
+.not-logged-in-text {
+  font-size: 36rpx;
+  font-weight: 500;
+  color: #2d3748;
+}
+
+.not-logged-in-desc {
+  font-size: 28rpx;
+  color: #718096;
+  text-align: center;
+  line-height: 1.6;
+}
+
+.action-section {
+  display: flex;
+  flex-direction: column;
+  gap: 24rpx;
+}
+
+.login-button {
+  width: 100%;
+  background: #8FBC8F;
+  color: #ffffff;
+  border-radius: 50rpx;
+  padding: 24rpx 60rpx;
+  font-size: 32rpx;
+  border: none;
+}
+
+.logout-button {
+  width: 100%;
+  background: transparent;
+  color: #2d3748;
+  border: 2rpx solid #e2e8f0;
+  border-radius: 50rpx;
+  padding: 24rpx 60rpx;
+  font-size: 32rpx;
+}
+
+.menu-section {
+  display: flex;
+  flex-direction: column;
+  gap: 24rpx;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 32rpx 0;
+  border-bottom: 1rpx solid #e2e8f0;
+  cursor: pointer;
+}
+
+.menu-item:last-child {
+  border-bottom: none;
+}
+
+.menu-item-text {
+  font-size: 32rpx;
+  color: #2d3748;
+}
+
+.menu-item-arrow {
+  font-size: 40rpx;
+  color: #a0aec0;
+}
+
+.about-section {
+  margin-top: 20rpx;
+}
+
+.about-text {
+  font-size: 28rpx;
+  color: #718096;
+  line-height: 1.8;
+  white-space: pre-line;
+  text-align: center;
+}

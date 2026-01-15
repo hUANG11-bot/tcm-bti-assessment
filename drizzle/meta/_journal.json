@@ -1,0 +1,41 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1764946579149,
+      "tag": "0000_cynical_captain_marvel",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1764946658247,
+      "tag": "0001_lame_scarlet_witch",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1764947205670,
+      "tag": "0002_long_beast",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1764987316089,
+      "tag": "0003_uneven_stepford_cuckoos",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1765462038863,
+      "tag": "0004_fast_penance",
+      "breakpoints": true
+    }
+  ]
+}

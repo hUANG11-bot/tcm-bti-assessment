@@ -1,0 +1,91 @@
+.user-info-page {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #fcfcfc 0%, #ffffff 100%);
+  padding: 40rpx 30rpx;
+}
+
+.form-container {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10rpx);
+  border-radius: 24rpx;
+  padding: 60rpx 40rpx;
+  box-shadow: 0 8rpx 24rpx rgba(0, 0, 0, 0.1);
+}
+
+.form-header {
+  text-align: center;
+  margin-bottom: 60rpx;
+}
+
+.form-title {
+  font-size: 48rpx;
+  font-weight: bold;
+  color: #2d3748;
+  display: block;
+  margin-bottom: 16rpx;
+}
+
+.form-desc {
+  font-size: 28rpx;
+  color: #718096;
+  display: block;
+}
+
+.form-content {
+  display: flex;
+  flex-direction: column;
+  gap: 40rpx;
+}
+
+.form-item {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.form-label {
+  font-size: 32rpx;
+  color: #2d3748;
+  font-weight: 500;
+}
+
+.form-input {
+  background: rgba(255, 255, 255, 0.8);
+  border: 2rpx solid #e2e8f0;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  font-size: 32rpx;
+}
+
+.form-hint {
+  font-size: 24rpx;
+  color: #718096;
+}
+
+.radio-label {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin-right: 40rpx;
+  font-size: 32rpx;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 16rpx 0;
+  font-size: 28rpx;
+}
+
+.submit-button {
+  background: #8FBC8F;
+  color: #ffffff;
+  border-radius: 50rpx;
+  padding: 24rpx;
+  font-size: 32rpx;
+  margin-top: 40rpx;
+  border: none;
+  width: 100%;
+  box-sizing: border-box;
+}

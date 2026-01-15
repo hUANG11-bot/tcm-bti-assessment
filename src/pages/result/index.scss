@@ -1,0 +1,405 @@
+@import '../../styles/variables.scss';
+
+.result-page {
+  min-height: 100vh;
+  background: #ffffff;
+  position: relative;
+}
+
+.result-scroll {
+  height: 100vh;
+}
+
+.result-container {
+  padding: 40rpx 30rpx 120rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 32rpx;
+  background: linear-gradient(180deg, #ffffff 0%, #f8f8f8 100%);
+}
+
+.result-header {
+  text-align: center;
+  margin-bottom: 20rpx;
+}
+
+.result-title {
+  font-size: 48rpx;
+  font-weight: bold;
+  color: #2d3748;
+  display: block;
+}
+
+// 主要体质类型
+.primary-type-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24rpx;
+  margin: 40rpx 0;
+}
+
+.primary-type-label {
+  font-size: 32rpx;
+  color: #718096;
+  display: block;
+}
+
+.primary-type-boxes {
+  display: flex;
+  gap: 16rpx;
+  justify-content: center;
+}
+
+.primary-type-box {
+  width: 120rpx;
+  height: 120rpx;
+  border: 4rpx solid #8FBC8F;
+  border-radius: 16rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+}
+
+.primary-type-char {
+  font-size: 64rpx;
+  font-weight: bold;
+  color: #2d3748;
+}
+
+// 兼有体质
+.secondary-type-section {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16rpx;
+  margin: 20rpx 0;
+}
+
+.secondary-type-label {
+  font-size: 28rpx;
+  color: #718096;
+}
+
+.secondary-type-name {
+  font-size: 32rpx;
+  font-weight: 500;
+  color: #8FBC8F;
+}
+
+// 柱状图
+.chart-section {
+  position: relative;
+  margin: 40rpx 0;
+  padding: 20rpx 0;
+}
+
+.chart-container {
+  display: flex;
+  justify-content: space-around;
+  align-items: flex-end;
+  height: 300rpx;
+  padding: 0 20rpx;
+}
+
+.chart-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12rpx;
+  flex: 1;
+}
+
+.chart-bar-wrapper {
+  width: 100%;
+  height: 200rpx;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.chart-bar {
+  width: 60%;
+  min-height: 20rpx;
+  background: #8FBC8F;
+  border-radius: 8rpx 8rpx 0 0;
+  transition: height 0.5s;
+  
+  &.primary {
+    background: #ef4444;
+  }
+}
+
+.chart-label {
+  font-size: 24rpx;
+  color: #718096;
+  text-align: center;
+}
+
+.chart-threshold-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2rpx;
+  background: #ef4444;
+  top: 120rpx;
+  z-index: 1;
+}
+
+.chart-threshold-label {
+  position: absolute;
+  left: 20rpx;
+  top: 110rpx;
+  font-size: 24rpx;
+  color: #ef4444;
+  z-index: 2;
+}
+
+// 趋势提示
+.trend-section {
+  padding: 24rpx;
+  background: rgba(143, 188, 143, 0.1);
+  border-radius: 16rpx;
+  margin: 20rpx 0;
+}
+
+.trend-text {
+  font-size: 28rpx;
+  color: #2d3748;
+  line-height: 1.6;
+}
+
+// 标准说明
+.standard-note {
+  text-align: center;
+  margin: 20rpx 0;
+}
+
+.standard-text {
+  font-size: 24rpx;
+  color: #a0aec0;
+}
+
+// 详细说明
+.details-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+  margin: 40rpx 0;
+}
+
+.detail-item {
+  background: rgba(143, 188, 143, 0.1);
+  border-radius: 16rpx;
+  overflow: hidden;
+  transition: all 0.3s;
+}
+
+.detail-item.expanded {
+  background: rgba(143, 188, 143, 0.15);
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 24rpx;
+  cursor: pointer;
+}
+
+.detail-number {
+  width: 48rpx;
+  height: 48rpx;
+  background: #8FBC8F;
+  border-radius: 8rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  font-size: 28rpx;
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+.detail-title {
+  flex: 1;
+  font-size: 32rpx;
+  font-weight: 500;
+  color: #2d3748;
+}
+
+.detail-arrow {
+  font-size: 24rpx;
+  color: #718096;
+  flex-shrink: 0;
+}
+
+.detail-content {
+  padding: 0 24rpx 24rpx 88rpx;
+  animation: slideDown 0.3s;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10rpx);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.detail-text {
+  font-size: 28rpx;
+  color: #2d3748;
+  line-height: 1.8;
+}
+
+.cause-item {
+  margin-bottom: 16rpx;
+  padding: 16rpx;
+  background: #ffffff;
+  border-radius: 8rpx;
+}
+
+.cause-text {
+  font-size: 28rpx;
+  color: #2d3748;
+  line-height: 1.6;
+}
+
+.trouble-item,
+.warning-item {
+  font-size: 28rpx;
+  color: #2d3748;
+  line-height: 1.8;
+  display: block;
+  margin-bottom: 12rpx;
+}
+
+.advice-text {
+  font-size: 28rpx;
+  color: #2d3748;
+  line-height: 1.8;
+}
+
+// 行动按钮
+.action-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24rpx;
+  margin: 40rpx 0;
+}
+
+.action-question {
+  font-size: 32rpx;
+  font-weight: 500;
+  color: #2d3748;
+  text-align: center;
+}
+
+.ai-chat-button {
+  width: 100%;
+  padding: 24rpx;
+  background: #8FBC8F !important;
+  color: #ffffff !important;
+  border-radius: 16rpx;
+  font-size: 32rpx;
+  font-weight: 500;
+  border: none;
+  margin-bottom: 20rpx;
+}
+
+.guide-button {
+  width: 100%;
+  padding: 24rpx;
+  background: #8FBC8F !important;
+  color: #ffffff !important;
+  border-radius: 16rpx;
+  font-size: 32rpx;
+  font-weight: 500;
+  border: none;
+}
+
+.retest-link {
+  font-size: 28rpx;
+  color: #8FBC8F;
+  text-decoration: underline;
+  margin-top: 16rpx;
+}
+
+// 底部信息
+.footer-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16rpx;
+  margin-top: 40rpx;
+  padding-top: 40rpx;
+  border-top: 1rpx solid rgba(226, 232, 240, 0.5);
+}
+
+.footer-logo {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.footer-brand {
+  font-size: 28rpx;
+  color: #8FBC8F;
+  font-weight: 500;
+}
+
+.footer-slogan {
+  font-size: 28rpx;
+  color: #718096;
+}
+
+.footer-desc {
+  font-size: 24rpx;
+  color: #a0aec0;
+  line-height: 1.6;
+  text-align: center;
+  max-width: 600rpx;
+}
+
+// 浮动保存按钮
+.floating-save-button {
+  position: fixed;
+  bottom: 40rpx;
+  right: 40rpx;
+  width: 160rpx;
+  height: 160rpx;
+  background: #8FBC8F;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8rpx 24rpx rgba(143, 188, 143, 0.3);
+  z-index: 100;
+}
+
+.save-button-text {
+  font-size: 28rpx;
+  color: #ffffff;
+  font-weight: 500;
+}
+
+// 空状态
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  gap: 40rpx;
+}
+
+.empty-text {
+  font-size: 48rpx;
+  color: #718096;
+}

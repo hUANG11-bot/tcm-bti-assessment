@@ -1,0 +1,101 @@
+@import '../../styles/variables.scss';
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16rpx;
+  white-space: nowrap;
+  border-radius: 16rpx;
+  font-size: 28rpx;
+  font-weight: 500;
+  transition: all 0.2s;
+  border: none;
+  outline: none;
+  
+  &:disabled {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+}
+
+// Variants
+.btn-default {
+  background: $primary-color;
+  color: #ffffff;
+  
+  &:active {
+    background: rgba(143, 188, 143, 0.9);
+  }
+}
+
+.btn-destructive {
+  background: #ef4444;
+  color: #ffffff;
+  
+  &:active {
+    background: rgba(239, 68, 68, 0.9);
+  }
+}
+
+.btn-outline {
+  background: transparent;
+  border: 2rpx solid $border-color;
+  color: $text-primary;
+  
+  &:active {
+    background: rgba(242, 242, 242, 0.5);
+  }
+}
+
+.btn-secondary {
+  background: rgba(242, 242, 242, 0.8);
+  color: $text-primary;
+  
+  &:active {
+    background: rgba(242, 242, 242, 1);
+  }
+}
+
+.btn-ghost {
+  background: transparent;
+  color: $text-primary;
+  
+  &:active {
+    background: rgba(242, 242, 242, 0.5);
+  }
+}
+
+.btn-link {
+  background: transparent;
+  color: $primary-color;
+  text-decoration: underline;
+  text-underline-offset: 8rpx;
+}
+
+// Sizes
+.btn-default {
+  min-height: 72rpx;
+  padding: 0 32rpx;
+}
+
+.btn-sm {
+  min-height: 64rpx;
+  padding: 0 24rpx;
+  font-size: 24rpx;
+  border-radius: 12rpx;
+}
+
+.btn-lg {
+  min-height: 80rpx;
+  padding: 0 48rpx;
+  font-size: 32rpx;
+  border-radius: 20rpx;
+}
+
+.btn-icon {
+  width: 72rpx;
+  height: 72rpx;
+  padding: 0;
+  min-height: auto;
+}

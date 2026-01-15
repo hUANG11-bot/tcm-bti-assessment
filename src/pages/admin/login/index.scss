@@ -1,0 +1,38 @@
+@import '../../../styles/variables.scss';
+
+.admin-login-page {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #fcfcfc 0%, #ffffff 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40rpx 30rpx;
+}
+
+.login-container {
+  width: 100%;
+  max-width: 600rpx;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 40rpx;
+}
+
+.form-item {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.form-label {
+  font-size: 32rpx;
+  color: $text-primary;
+  font-weight: 500;
+}
+
+.login-button {
+  width: 100%;
+  margin-top: 20rpx;
+}

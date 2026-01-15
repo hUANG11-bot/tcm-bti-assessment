@@ -348,14 +348,14 @@ var SDKServer = class {
         algorithms: ["HS256"]
       });
       const { openId, appId, name } = payload;
-      if (!isNonEmptyString(openId) || !isNonEmptyString(appId) || !isNonEmptyString(name)) {
+      if (!isNonEmptyString(openId)) {
         console.warn("[Auth] Session payload missing required fields");
         return null;
       }
       return {
         openId,
-        appId,
-        name
+        appId: typeof appId === "string" ? appId : "",
+        name: typeof name === "string" ? name : ""
       };
     } catch (error) {
       console.warn("[Auth] Session verification failed", String(error));
@@ -383,7 +383,19 @@ var SDKServer = class {
   }
   async authenticateRequest(req, silent = false) {
     const cookies = this.parseCookies(req.headers.cookie);
-    const sessionCookie = cookies.get(COOKIE_NAME);
+    const headerSessionToken = (() => {
+      const h = req?.headers ?? {};
+      const raw = h["x-session-token"] ?? h["X-Session-Token"];
+      return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+    })();
+    const authHeaderToken = (() => {
+      const h = req?.headers ?? {};
+      const raw = h["authorization"] ?? h["Authorization"];
+      if (typeof raw !== "string") return null;
+      const m = raw.match(/^\s*Bearer\s+(.+)\s*$/i);
+      return m && m[1] ? m[1].trim() : null;
+    })();
+    const sessionCookie = cookies.get(COOKIE_NAME) ?? headerSessionToken ?? authHeaderToken;
     const session = await this.verifySession(sessionCookie, silent);
     if (!session) {
       throw ForbiddenError("Invalid session cookie");

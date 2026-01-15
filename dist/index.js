@@ -201,6 +201,7 @@ var ForbiddenError = (msg) => new HttpError(403, msg);
 
 // server/_core/sdk.ts
 import axios from "axios";
+import https from "https";
 import { parse as parseCookieHeader } from "cookie";
 import { SignJWT, jwtVerify } from "jose";
 var isNonEmptyString = (value) => typeof value === "string" && value.length > 0;
@@ -1703,8 +1704,14 @@ router4.post("/login", async (req, res) => {
     const wxApiUrl = `https://api.weixin.qq.com/sns/jscode2session?appid=${WX_APPID}&secret=${WX_SECRET}&js_code=${code}&grant_type=authorization_code`;
     console.log("[WeChat Login] Calling WeChat API with AppID:", WX_APPID);
     console.log("[WeChat Login] Code length:", code?.length || 0);
-    const wxResponse = await fetch(wxApiUrl);
-    const wxData = await wxResponse.json();
+    const httpsAgent = new https.Agent({
+      rejectUnauthorized: false
+    });
+    const wxResponse = await axios.get(wxApiUrl, {
+      httpsAgent,
+      timeout: 1e4
+    });
+    const wxData = wxResponse.data;
     if (wxData.errcode) {
       console.error("[WeChat Login] WeChat API error:", {
         errcode: wxData.errcode,
@@ -1742,7 +1749,7 @@ router4.post("/login", async (req, res) => {
         message: "\u6570\u636E\u5E93\u8FDE\u63A5\u5931\u8D25"
       });
     }
-    await db.upsertUser({
+    await upsertUser({
       openId: openid,
       name: userInfo?.nickName || null,
       email: null,
@@ -1764,7 +1771,8 @@ router4.post("/login", async (req, res) => {
         openId: openid,
         name: userInfo?.nickName || null,
         avatar: userInfo?.avatarUrl || null
-      }
+      },
+      sessionToken
     });
   } catch (error) {
     console.error("[WeChat Login] Error:", error);

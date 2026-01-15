@@ -14,10 +14,13 @@ RUN npm install --legacy-peer-deps --timeout=600000 || \
     npm install --timeout=600000 || \
     (echo "ERROR: All npm install attempts failed" && exit 1)
 
-# 复制应用代码
-COPY dist ./dist
+# 复制应用代码（从源码构建 dist/index.js，避免使用仓库里的旧 dist）
 COPY server ./server
 COPY shared ./shared
+COPY drizzle ./drizzle
+
+# 构建后端产物
+RUN npm run build:server
 
 # 验证文件存在
 RUN test -f dist/index.js || (echo "ERROR: dist/index.js not found!" && exit 1)

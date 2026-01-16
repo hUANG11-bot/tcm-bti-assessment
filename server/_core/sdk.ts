@@ -216,19 +216,16 @@ class SDKServer {
       });
       const { openId, appId, name } = payload as Record<string, unknown>;
 
-      if (
-        !isNonEmptyString(openId) ||
-        !isNonEmptyString(appId) ||
-        !isNonEmptyString(name)
-      ) {
+      // 只要求 openId 非空，appId 和 name 可以为空（微信小程序登录时可能为空）
+      if (!isNonEmptyString(openId)) {
         console.warn("[Auth] Session payload missing required fields");
         return null;
       }
 
       return {
         openId,
-        appId,
-        name,
+        appId: typeof appId === "string" ? appId : "",
+        name: typeof name === "string" ? name : "",
       };
     } catch (error) {
       console.warn("[Auth] Session verification failed", String(error));
@@ -263,7 +260,25 @@ class SDKServer {
   async authenticateRequest(req: Request, silent: boolean = false): Promise<User> {
     // Regular authentication flow
     const cookies = this.parseCookies(req.headers.cookie);
-    const sessionCookie = cookies.get(COOKIE_NAME);
+    
+    // 支持从多种来源获取 session token：
+    // 1. Cookie (浏览器)
+    // 2. x-session-token header (小程序)
+    // 3. Authorization: Bearer token (API)
+    const headerSessionToken = (() => {
+      const h = req?.headers ?? {};
+      const raw = h["x-session-token"] ?? h["X-Session-Token"];
+      return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+    })();
+    const authHeaderToken = (() => {
+      const h = req?.headers ?? {};
+      const raw = h["authorization"] ?? h["Authorization"];
+      if (typeof raw !== "string") return null;
+      const m = raw.match(/^\s*Bearer\s+(.+)\s*$/i);
+      return m && m[1] ? m[1].trim() : null;
+    })();
+    
+    const sessionCookie = cookies.get(COOKIE_NAME) ?? headerSessionToken ?? authHeaderToken;
     const session = await this.verifySession(sessionCookie, silent);
 
     if (!session) {

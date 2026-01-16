@@ -20,12 +20,48 @@ import { verifyAdminLogin, hasAdminUsers, createAdminUser, getAdminById } from '
 import { TRPCError } from '@trpc/server';
 import { invokeLLM, type Message } from './_core/llm';
 import { invokeChineseLLM } from './_core/llm-chinese';
+import { getDb } from './db';
+import { users } from '../drizzle/schema';
+import { eq } from 'drizzle-orm';
 
 export const appRouter = router({
     // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
   system: systemRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
+    updateProfile: protectedProcedure
+      .input(
+        z.object({
+          birthDate: z.string().optional(),
+          gender: z.string().optional(),
+        })
+      )
+      .mutation(async ({ ctx, input }) => {
+        const db = await getDb();
+        if (!db) {
+          throw new Error("Database not available");
+        }
+        const updateData: Record<string, unknown> = {};
+        if (input.birthDate !== undefined) {
+          updateData.birthDate = input.birthDate;
+        }
+        if (input.gender !== undefined) {
+          updateData.gender = input.gender;
+        }
+        if (Object.keys(updateData).length === 0) {
+          return ctx.user;
+        }
+        await db
+          .update(users)
+          .set(updateData)
+          .where(eq(users.id, ctx.user.id));
+        const updated = await db
+          .select()
+          .from(users)
+          .where(eq(users.id, ctx.user.id))
+          .limit(1);
+        return updated[0] || ctx.user;
+      }),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
@@ -75,6 +111,26 @@ export const appRouter = router({
         scores: JSON.parse(a.scores),
         fullReport: JSON.parse(a.fullReport),
       }));
+    }),
+
+    // 获取当前用户的测评趋势数据（用于绘制曲线图）
+    trendData: protectedProcedure.query(async ({ ctx }) => {
+      const assessments = await getUserAssessments(ctx.user.id);
+      // 按时间排序
+      const sorted = assessments.sort((a, b) => 
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      );
+      // 提取每次测评的分数和日期
+      return sorted.map((a) => {
+        const scores = JSON.parse(a.scores);
+        return {
+          id: a.id,
+          date: a.createdAt,
+          primaryType: a.primaryType,
+          secondaryType: a.secondaryType,
+          scores: scores,
+        };
+      });
     }),
 
     // 获取单条测评记录

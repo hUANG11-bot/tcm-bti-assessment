@@ -402,14 +402,19 @@ export const appRouter = router({
           // 优先从测评记录中获取（更可靠）
           if (ctx.user && (!finalAge || !finalGender)) {
             try {
+              console.log(`[AI Chat] 尝试从测评记录获取用户信息 - 用户ID: ${ctx.user.id}, 当前age: ${finalAge}, gender: ${finalGender}`);
               const assessments = await getUserAssessments(ctx.user.id);
+              console.log(`[AI Chat] 获取到 ${assessments?.length || 0} 条测评记录`);
               if (assessments && assessments.length > 0) {
                 const latestAssessment = assessments[0]; // 已经按时间倒序排列
+                console.log(`[AI Chat] 最新测评记录 - age: ${latestAssessment.age}, gender: ${latestAssessment.gender}`);
                 if (!finalAge && latestAssessment.age) {
                   finalAge = latestAssessment.age;
+                  console.log(`[AI Chat] 从测评记录获取到年龄: ${finalAge}`);
                 }
                 if (!finalGender && latestAssessment.gender) {
                   finalGender = latestAssessment.gender;
+                  console.log(`[AI Chat] 从测评记录获取到性别: ${finalGender}`);
                 }
               }
             } catch (e) {

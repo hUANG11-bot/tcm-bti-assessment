@@ -9,6 +9,7 @@ import {
   getAssessmentById,
   getAllAssessments,
   getAssessmentStats,
+  deleteAssessment,
 } from "./assessments";
 import {
   createInvitation,
@@ -148,6 +149,14 @@ export const appRouter = router({
           scores: JSON.parse(assessment.scores),
           fullReport: JSON.parse(assessment.fullReport),
         };
+      }),
+
+    // 删除测评记录
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        await deleteAssessment(input.id, ctx.user.id);
+        return { success: true };
       }),
 
     // 管理员：获取所有测评记录

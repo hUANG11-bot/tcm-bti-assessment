@@ -40,11 +40,29 @@ export async function getUserAssessments(userId: number): Promise<Assessment[]> 
     throw new Error("Database not available");
   }
 
-  return db
-    .select()
-    .from(assessments)
-    .where(eq(assessments.userId, userId))
-    .orderBy(desc(assessments.createdAt));
+  try {
+    return db
+      .select({
+        id: assessments.id,
+        userId: assessments.userId,
+        age: assessments.age,
+        gender: assessments.gender,
+        habits: assessments.habits,
+        answers: assessments.answers,
+        primaryType: assessments.primaryType,
+        secondaryType: assessments.secondaryType,
+        scores: assessments.scores,
+        fullReport: assessments.fullReport,
+        createdAt: assessments.createdAt,
+        updatedAt: assessments.updatedAt,
+      })
+      .from(assessments)
+      .where(eq(assessments.userId, userId))
+      .orderBy(desc(assessments.createdAt));
+  } catch (error) {
+    console.error("[getUserAssessments] 查询失败:", error);
+    throw error;
+  }
 }
 
 /**
@@ -63,6 +81,38 @@ export async function getAssessmentById(id: number): Promise<Assessment | undefi
     .limit(1);
 
   return assessment;
+}
+
+/**
+ * 删除测评记录（只能删除自己的记录）
+ */
+export async function deleteAssessment(id: number, userId: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database not available");
+  }
+
+  // 先检查记录是否存在且属于该用户
+  const [assessment] = await db
+    .select()
+    .from(assessments)
+    .where(eq(assessments.id, id))
+    .limit(1);
+
+  if (!assessment) {
+    throw new Error("Assessment not found");
+  }
+
+  if (assessment.userId !== userId) {
+    throw new Error("Unauthorized: You can only delete your own assessments");
+  }
+
+  // 删除记录
+  await db
+    .delete(assessments)
+    .where(eq(assessments.id, id));
+
+  return true;
 }
 
 /**

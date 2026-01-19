@@ -183,7 +183,7 @@ export async function invokeChineseLLM(params: InvokeParams): Promise<InvokeResu
   const { messages } = params;
   
   // 从环境变量获取配置
-  const provider = (process.env.AI_PROVIDER || 'deepseek').toLowerCase() as AIProvider;
+  const provider = (process.env.AI_PROVIDER || 'qwen').toLowerCase() as AIProvider;
   const apiKey = process.env.AI_API_KEY || '';
   const apiUrl = process.env.AI_API_URL || '';
 
@@ -209,8 +209,8 @@ export async function invokeChineseLLM(params: InvokeParams): Promise<InvokeResu
         return await invokeCustom(messages, apiKey, apiUrl);
       
       default:
-        // 默认使用DeepSeek
-        return await invokeDeepSeek(messages, apiKey);
+        // 默认使用通义千问
+        return await invokeQwen(messages, apiKey);
     }
   } catch (error: any) {
     console.error('[Chinese LLM] Error:', error);

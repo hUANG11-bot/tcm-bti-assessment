@@ -8,7 +8,7 @@ export const ENV = {
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
   // 国内AI服务配置
-  aiProvider: process.env.AI_PROVIDER ?? "deepseek",
+  aiProvider: process.env.AI_PROVIDER ?? "qwen",
   aiApiKey: process.env.AI_API_KEY ?? "",
   aiApiUrl: process.env.AI_API_URL ?? "",
 };

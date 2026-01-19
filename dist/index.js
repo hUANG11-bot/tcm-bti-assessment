@@ -96,7 +96,7 @@ var ENV = {
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
   // 国内AI服务配置
-  aiProvider: process.env.AI_PROVIDER ?? "deepseek",
+  aiProvider: process.env.AI_PROVIDER ?? "qwen",
   aiApiKey: process.env.AI_API_KEY ?? "",
   aiApiUrl: process.env.AI_API_URL ?? ""
 };
@@ -128,7 +128,7 @@ async function upsertUser(user) {
       openId: user.openId
     };
     const updateSet = {};
-    const textFields = ["name", "email", "loginMethod"];
+    const textFields = ["name", "email", "loginMethod", "birthDate", "gender"];
     const assignNullable = (field) => {
       const value = user[field];
       if (value === void 0) return;
@@ -201,7 +201,6 @@ var ForbiddenError = (msg) => new HttpError(403, msg);
 
 // server/_core/sdk.ts
 import axios from "axios";
-import https from "https";
 import { parse as parseCookieHeader } from "cookie";
 import { SignJWT, jwtVerify } from "jose";
 var isNonEmptyString = (value) => typeof value === "string" && value.length > 0;
@@ -640,7 +639,25 @@ async function getUserAssessments(userId) {
   if (!db) {
     throw new Error("Database not available");
   }
-  return db.select().from(assessments).where(eq2(assessments.userId, userId)).orderBy(desc(assessments.createdAt));
+  try {
+    return db.select({
+      id: assessments.id,
+      userId: assessments.userId,
+      age: assessments.age,
+      gender: assessments.gender,
+      habits: assessments.habits,
+      answers: assessments.answers,
+      primaryType: assessments.primaryType,
+      secondaryType: assessments.secondaryType,
+      scores: assessments.scores,
+      fullReport: assessments.fullReport,
+      createdAt: assessments.createdAt,
+      updatedAt: assessments.updatedAt
+    }).from(assessments).where(eq2(assessments.userId, userId)).orderBy(desc(assessments.createdAt));
+  } catch (error) {
+    console.error("[getUserAssessments] \u67E5\u8BE2\u5931\u8D25:", error);
+    throw error;
+  }
 }
 async function getAssessmentById(id) {
   const db = await getDb();
@@ -649,6 +666,21 @@ async function getAssessmentById(id) {
   }
   const [assessment] = await db.select().from(assessments).where(eq2(assessments.id, id)).limit(1);
   return assessment;
+}
+async function deleteAssessment(id, userId) {
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database not available");
+  }
+  const [assessment] = await db.select().from(assessments).where(eq2(assessments.id, id)).limit(1);
+  if (!assessment) {
+    throw new Error("Assessment not found");
+  }
+  if (assessment.userId !== userId) {
+    throw new Error("Unauthorized: You can only delete your own assessments");
+  }
+  await db.delete(assessments).where(eq2(assessments.id, id));
+  return true;
 }
 async function getAllAssessments() {
   const db = await getDb();
@@ -1121,7 +1153,7 @@ async function invokeCustom(messages, apiKey, apiUrl) {
 }
 async function invokeChineseLLM(params) {
   const { messages } = params;
-  const provider = (process.env.AI_PROVIDER || "deepseek").toLowerCase();
+  const provider = (process.env.AI_PROVIDER || "qwen").toLowerCase();
   const apiKey = process.env.AI_API_KEY || "";
   const apiUrl = process.env.AI_API_URL || "";
   if (!apiKey) {
@@ -1141,7 +1173,7 @@ async function invokeChineseLLM(params) {
         }
         return await invokeCustom(messages, apiKey, apiUrl);
       default:
-        return await invokeDeepSeek(messages, apiKey);
+        return await invokeQwen(messages, apiKey);
     }
   } catch (error) {
     console.error("[Chinese LLM] Error:", error);
@@ -1150,11 +1182,36 @@ async function invokeChineseLLM(params) {
 }
 
 // server/routers.ts
+import { eq as eq5 } from "drizzle-orm";
 var appRouter = router({
   // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
   system: systemRouter,
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),
+    updateProfile: protectedProcedure.input(
+      z2.object({
+        birthDate: z2.string().optional(),
+        gender: z2.string().optional()
+      })
+    ).mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) {
+        throw new Error("Database not available");
+      }
+      const updateData = {};
+      if (input.birthDate !== void 0) {
+        updateData.birthDate = input.birthDate;
+      }
+      if (input.gender !== void 0) {
+        updateData.gender = input.gender;
+      }
+      if (Object.keys(updateData).length === 0) {
+        return ctx.user;
+      }
+      await db.update(users).set(updateData).where(eq5(users.id, ctx.user.id));
+      const updated = await db.select().from(users).where(eq5(users.id, ctx.user.id)).limit(1);
+      return updated[0] || ctx.user;
+    }),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
@@ -1201,6 +1258,23 @@ var appRouter = router({
         fullReport: JSON.parse(a.fullReport)
       }));
     }),
+    // 获取当前用户的测评趋势数据（用于绘制曲线图）
+    trendData: protectedProcedure.query(async ({ ctx }) => {
+      const assessments2 = await getUserAssessments(ctx.user.id);
+      const sorted = assessments2.sort(
+        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      );
+      return sorted.map((a) => {
+        const scores = JSON.parse(a.scores);
+        return {
+          id: a.id,
+          date: a.createdAt,
+          primaryType: a.primaryType,
+          secondaryType: a.secondaryType,
+          scores
+        };
+      });
+    }),
     // 获取单条测评记录
     getById: protectedProcedure.input(z2.object({ id: z2.number() })).query(async ({ input }) => {
       const assessment = await getAssessmentById(input.id);
@@ -1214,6 +1288,11 @@ var appRouter = router({
         scores: JSON.parse(assessment.scores),
         fullReport: JSON.parse(assessment.fullReport)
       };
+    }),
+    // 删除测评记录
+    delete: protectedProcedure.input(z2.object({ id: z2.number() })).mutation(async ({ ctx, input }) => {
+      await deleteAssessment(input.id, ctx.user.id);
+      return { success: true };
     }),
     // 管理员：获取所有测评记录
     all: protectedProcedure.query(async ({ ctx }) => {
@@ -1417,7 +1496,7 @@ var appRouter = router({
 });
 
 // server/_core/context.ts
-import { eq as eq5 } from "drizzle-orm";
+import { eq as eq6 } from "drizzle-orm";
 async function createContext(opts) {
   let user = null;
   let adminId = null;
@@ -1435,7 +1514,7 @@ async function createContext(opts) {
         const db = await getDb();
         if (db) {
           const adminOpenId = `admin_${admin.username}`;
-          const existingUsers = await db.select().from(users).where(eq5(users.openId, adminOpenId)).limit(1);
+          const existingUsers = await db.select().from(users).where(eq6(users.openId, adminOpenId)).limit(1);
           if (existingUsers.length > 0) {
             user = existingUsers[0];
           } else {
@@ -1445,7 +1524,7 @@ async function createContext(opts) {
               role: "admin",
               loginMethod: "admin"
             });
-            const newUsers = await db.select().from(users).where(eq5(users.openId, adminOpenId)).limit(1);
+            const newUsers = await db.select().from(users).where(eq6(users.openId, adminOpenId)).limit(1);
             if (newUsers.length > 0) {
               user = newUsers[0];
             }
@@ -1455,7 +1534,7 @@ async function createContext(opts) {
         if (user.role !== "admin") {
           const db = await getDb();
           if (db) {
-            await db.update(users).set({ role: "admin" }).where(eq5(users.id, user.id));
+            await db.update(users).set({ role: "admin" }).where(eq6(users.id, user.id));
             user.role = "admin";
           }
         }
@@ -1573,7 +1652,7 @@ import cookieParser from "cookie-parser";
 
 // server/api/admin-auth.ts
 import { Router } from "express";
-import { eq as eq6 } from "drizzle-orm";
+import { eq as eq7 } from "drizzle-orm";
 import bcrypt2 from "bcryptjs";
 var router2 = Router();
 router2.post("/login", async (req, res) => {
@@ -1586,7 +1665,7 @@ router2.post("/login", async (req, res) => {
     if (!db) {
       return res.status(500).json({ error: "\u6570\u636E\u5E93\u8FDE\u63A5\u5931\u8D25" });
     }
-    const [admin] = await db.select().from(adminUsers).where(eq6(adminUsers.username, username)).limit(1);
+    const [admin] = await db.select().from(adminUsers).where(eq7(adminUsers.username, username)).limit(1);
     if (!admin) {
       return res.status(401).json({ error: "\u7528\u6237\u540D\u6216\u5BC6\u7801\u9519\u8BEF" });
     }
@@ -1623,7 +1702,7 @@ router2.get("/check", async (req, res) => {
     if (!db) {
       return res.status(500).json({ error: "\u6570\u636E\u5E93\u8FDE\u63A5\u5931\u8D25" });
     }
-    const [admin] = await db.select().from(adminUsers).where(eq6(adminUsers.id, parseInt(adminId))).limit(1);
+    const [admin] = await db.select().from(adminUsers).where(eq7(adminUsers.id, parseInt(adminId))).limit(1);
     if (!admin) {
       res.clearCookie("admin_id", {
         httpOnly: true,
@@ -1656,7 +1735,7 @@ var admin_auth_default = router2;
 
 // server/api/history.ts
 import { Router as Router2 } from "express";
-import { eq as eq7 } from "drizzle-orm";
+import { eq as eq8 } from "drizzle-orm";
 var router3 = Router2();
 router3.get("/assessments/history", async (req, res) => {
   try {
@@ -1679,7 +1758,7 @@ router3.get("/assessments/history", async (req, res) => {
       primaryType: assessments.primaryType,
       secondaryType: assessments.secondaryType,
       scores: assessments.scores
-    }).from(assessments).where(eq7(assessments.phone, phone)).orderBy(assessments.createdAt);
+    }).from(assessments).where(eq8(assessments.phone, phone)).orderBy(assessments.createdAt);
     const formattedRecords = records.map((record) => ({
       ...record,
       scores: typeof record.scores === "string" ? JSON.parse(record.scores) : record.scores
@@ -1694,6 +1773,8 @@ var history_default = router3;
 
 // server/api/wechat-login.ts
 import { Router as Router3 } from "express";
+import axios2 from "axios";
+import https from "https";
 var router4 = Router3();
 router4.post("/login", async (req, res) => {
   try {
@@ -1718,10 +1799,12 @@ router4.post("/login", async (req, res) => {
     console.log("[WeChat Login] Code length:", code?.length || 0);
     const httpsAgent = new https.Agent({
       rejectUnauthorized: false
+      // 在云托管环境中可能需要设置为 false
     });
-    const wxResponse = await axios.get(wxApiUrl, {
+    const wxResponse = await axios2.get(wxApiUrl, {
       httpsAgent,
       timeout: 1e4
+      // 10秒超时
     });
     const wxData = wxResponse.data;
     if (wxData.errcode) {
@@ -1754,13 +1837,6 @@ router4.post("/login", async (req, res) => {
         message: "\u83B7\u53D6\u7528\u6237 openid \u5931\u8D25"
       });
     }
-    const db = await getDb();
-    if (!db) {
-      return res.status(500).json({
-        success: false,
-        message: "\u6570\u636E\u5E93\u8FDE\u63A5\u5931\u8D25"
-      });
-    }
     await upsertUser({
       openId: openid,
       name: userInfo?.nickName || null,
@@ -1784,6 +1860,7 @@ router4.post("/login", async (req, res) => {
         name: userInfo?.nickName || null,
         avatar: userInfo?.avatarUrl || null
       },
+      // 小程序需要手动管理 cookie，所以返回 token
       sessionToken
     });
   } catch (error) {

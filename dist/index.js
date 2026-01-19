@@ -1249,14 +1249,26 @@ var appRouter = router({
     }),
     // 获取当前用户的测评历史
     myAssessments: protectedProcedure.query(async ({ ctx }) => {
-      const assessments2 = await getUserAssessments(ctx.user.id);
-      return assessments2.map((a) => ({
-        ...a,
-        habits: JSON.parse(a.habits),
-        answers: JSON.parse(a.answers),
-        scores: JSON.parse(a.scores),
-        fullReport: JSON.parse(a.fullReport)
-      }));
+      try {
+        console.log(`[myAssessments] \u67E5\u8BE2\u7528\u6237 ${ctx.user.id} \u7684\u6D4B\u8BC4\u8BB0\u5F55`);
+        const assessments2 = await getUserAssessments(ctx.user.id);
+        console.log(`[myAssessments] \u67E5\u8BE2\u6210\u529F\uFF0C\u627E\u5230 ${assessments2.length} \u6761\u8BB0\u5F55`);
+        return assessments2.map((a) => ({
+          ...a,
+          habits: JSON.parse(a.habits),
+          answers: JSON.parse(a.answers),
+          scores: JSON.parse(a.scores),
+          fullReport: JSON.parse(a.fullReport)
+        }));
+      } catch (error) {
+        console.error(`[myAssessments] \u67E5\u8BE2\u5931\u8D25 - \u7528\u6237ID: ${ctx.user.id}`, error);
+        console.error(`[myAssessments] \u9519\u8BEF\u8BE6\u60C5:`, {
+          message: error?.message,
+          stack: error?.stack,
+          name: error?.name
+        });
+        throw error;
+      }
     }),
     // 获取当前用户的测评趋势数据（用于绘制曲线图）
     trendData: protectedProcedure.query(async ({ ctx }) => {

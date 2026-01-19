@@ -104,14 +104,26 @@ export const appRouter = router({
 
     // 获取当前用户的测评历史
     myAssessments: protectedProcedure.query(async ({ ctx }) => {
-      const assessments = await getUserAssessments(ctx.user.id);
-      return assessments.map((a) => ({
-        ...a,
-        habits: JSON.parse(a.habits),
-        answers: JSON.parse(a.answers),
-        scores: JSON.parse(a.scores),
-        fullReport: JSON.parse(a.fullReport),
-      }));
+      try {
+        console.log(`[myAssessments] 查询用户 ${ctx.user.id} 的测评记录`);
+        const assessments = await getUserAssessments(ctx.user.id);
+        console.log(`[myAssessments] 查询成功，找到 ${assessments.length} 条记录`);
+        return assessments.map((a) => ({
+          ...a,
+          habits: JSON.parse(a.habits),
+          answers: JSON.parse(a.answers),
+          scores: JSON.parse(a.scores),
+          fullReport: JSON.parse(a.fullReport),
+        }));
+      } catch (error: any) {
+        console.error(`[myAssessments] 查询失败 - 用户ID: ${ctx.user.id}`, error);
+        console.error(`[myAssessments] 错误详情:`, {
+          message: error?.message,
+          stack: error?.stack,
+          name: error?.name,
+        });
+        throw error;
+      }
     }),
 
     // 获取当前用户的测评趋势数据（用于绘制曲线图）

@@ -13,6 +13,7 @@
     "test": "vitest run",
     "db:push": "drizzle-kit generate && drizzle-kit migrate",
     "db:add-fields": "node scripts/add-fields.js",
+    "fix:api-url": "node scripts/fix-api-url.js",
     "create-admin": "tsx scripts/create-admin.ts",
     "check-wechat": "tsx scripts/check-wechat-config.ts",
     "generate-jwt": "tsx scripts/generate-jwt-secret.ts",

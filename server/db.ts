@@ -30,15 +30,22 @@ export async function upsertUser(user: InsertUser): Promise<void> {
   }
 
   try {
+    console.log(`[upsertUser] 开始创建/更新用户 - openId: ${user.openId}`);
+    
     const values: InsertUser = {
       openId: user.openId,
     };
     const updateSet: Record<string, unknown> = {};
 
-    const textFields = ["name", "email", "loginMethod", "birthDate", "gender"] as const;
-    type TextField = (typeof textFields)[number];
+    // 基础字段（必须存在）
+    const requiredFields = ["name", "email", "loginMethod"] as const;
+    // 可选字段（可能不存在于旧数据库中）
+    const optionalFields = ["birthDate", "gender"] as const;
+    
+    type RequiredField = (typeof requiredFields)[number];
+    type OptionalField = (typeof optionalFields)[number];
 
-    const assignNullable = (field: TextField) => {
+    const assignNullable = (field: RequiredField | OptionalField) => {
       const value = user[field];
       if (value === undefined) return;
       const normalized = value ?? null;
@@ -46,7 +53,11 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       updateSet[field] = normalized;
     };
 
-    textFields.forEach(assignNullable);
+    // 先处理必需字段
+    requiredFields.forEach(assignNullable);
+    
+    // 再处理可选字段（如果用户提供了值）
+    optionalFields.forEach(assignNullable);
 
     if (user.lastSignedIn !== undefined) {
       values.lastSignedIn = user.lastSignedIn;
@@ -68,11 +79,39 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       updateSet.lastSignedIn = new Date();
     }
 
+    console.log(`[upsertUser] 准备插入的值:`, {
+      openId: values.openId,
+      name: values.name,
+      email: values.email,
+      loginMethod: values.loginMethod,
+      birthDate: values.birthDate,
+      gender: values.gender,
+      role: values.role,
+    });
+    console.log(`[upsertUser] 准备更新的字段:`, Object.keys(updateSet));
+
     await db.insert(users).values(values).onDuplicateKeyUpdate({
       set: updateSet,
     });
-  } catch (error) {
-    console.error("[Database] Failed to upsert user:", error);
+    
+    console.log(`[upsertUser] 用户创建/更新成功 - openId: ${user.openId}`);
+  } catch (error: any) {
+    console.error("[upsertUser] 创建/更新用户失败:", error);
+    console.error("[upsertUser] 错误类型:", error?.constructor?.name);
+    console.error("[upsertUser] 错误消息:", error?.message);
+    console.error("[upsertUser] 错误堆栈:", error?.stack);
+    if (error?.code) {
+      console.error("[upsertUser] 错误代码:", error.code);
+    }
+    if (error?.errno) {
+      console.error("[upsertUser] 错误编号:", error.errno);
+    }
+    if (error?.sqlState) {
+      console.error("[upsertUser] SQL状态:", error.sqlState);
+    }
+    if (error?.sqlMessage) {
+      console.error("[upsertUser] SQL消息:", error.sqlMessage);
+    }
     throw error;
   }
 }

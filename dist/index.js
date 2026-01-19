@@ -126,11 +126,13 @@ async function upsertUser(user) {
     return;
   }
   try {
+    console.log(`[upsertUser] \u5F00\u59CB\u521B\u5EFA/\u66F4\u65B0\u7528\u6237 - openId: ${user.openId}`);
     const values = {
       openId: user.openId
     };
     const updateSet = {};
-    const textFields = ["name", "email", "loginMethod", "birthDate", "gender"];
+    const requiredFields = ["name", "email", "loginMethod"];
+    const optionalFields = ["birthDate", "gender"];
     const assignNullable = (field) => {
       const value = user[field];
       if (value === void 0) return;
@@ -138,7 +140,8 @@ async function upsertUser(user) {
       values[field] = normalized;
       updateSet[field] = normalized;
     };
-    textFields.forEach(assignNullable);
+    requiredFields.forEach(assignNullable);
+    optionalFields.forEach(assignNullable);
     if (user.lastSignedIn !== void 0) {
       values.lastSignedIn = user.lastSignedIn;
       updateSet.lastSignedIn = user.lastSignedIn;
@@ -156,11 +159,37 @@ async function upsertUser(user) {
     if (Object.keys(updateSet).length === 0) {
       updateSet.lastSignedIn = /* @__PURE__ */ new Date();
     }
+    console.log(`[upsertUser] \u51C6\u5907\u63D2\u5165\u7684\u503C:`, {
+      openId: values.openId,
+      name: values.name,
+      email: values.email,
+      loginMethod: values.loginMethod,
+      birthDate: values.birthDate,
+      gender: values.gender,
+      role: values.role
+    });
+    console.log(`[upsertUser] \u51C6\u5907\u66F4\u65B0\u7684\u5B57\u6BB5:`, Object.keys(updateSet));
     await db.insert(users).values(values).onDuplicateKeyUpdate({
       set: updateSet
     });
+    console.log(`[upsertUser] \u7528\u6237\u521B\u5EFA/\u66F4\u65B0\u6210\u529F - openId: ${user.openId}`);
   } catch (error) {
-    console.error("[Database] Failed to upsert user:", error);
+    console.error("[upsertUser] \u521B\u5EFA/\u66F4\u65B0\u7528\u6237\u5931\u8D25:", error);
+    console.error("[upsertUser] \u9519\u8BEF\u7C7B\u578B:", error?.constructor?.name);
+    console.error("[upsertUser] \u9519\u8BEF\u6D88\u606F:", error?.message);
+    console.error("[upsertUser] \u9519\u8BEF\u5806\u6808:", error?.stack);
+    if (error?.code) {
+      console.error("[upsertUser] \u9519\u8BEF\u4EE3\u7801:", error.code);
+    }
+    if (error?.errno) {
+      console.error("[upsertUser] \u9519\u8BEF\u7F16\u53F7:", error.errno);
+    }
+    if (error?.sqlState) {
+      console.error("[upsertUser] SQL\u72B6\u6001:", error.sqlState);
+    }
+    if (error?.sqlMessage) {
+      console.error("[upsertUser] SQL\u6D88\u606F:", error.sqlMessage);
+    }
     throw error;
   }
 }
@@ -1973,13 +2002,30 @@ router4.post("/login", async (req, res) => {
         message: "\u83B7\u53D6\u7528\u6237 openid \u5931\u8D25"
       });
     }
-    await upsertUser({
+    console.log("[WeChat Login] \u51C6\u5907\u521B\u5EFA/\u66F4\u65B0\u7528\u6237:", {
       openId: openid,
-      name: userInfo?.nickName || null,
-      email: null,
-      loginMethod: "wechat_miniprogram",
-      lastSignedIn: /* @__PURE__ */ new Date()
+      name: userInfo?.nickName || null
     });
+    try {
+      await upsertUser({
+        openId: openid,
+        name: userInfo?.nickName || null,
+        email: null,
+        loginMethod: "wechat_miniprogram",
+        lastSignedIn: /* @__PURE__ */ new Date()
+      });
+      console.log("[WeChat Login] \u7528\u6237\u521B\u5EFA/\u66F4\u65B0\u6210\u529F");
+    } catch (dbError) {
+      console.error("[WeChat Login] \u6570\u636E\u5E93\u64CD\u4F5C\u5931\u8D25:", dbError);
+      console.error("[WeChat Login] \u9519\u8BEF\u8BE6\u60C5:", {
+        message: dbError?.message,
+        code: dbError?.code,
+        errno: dbError?.errno,
+        sqlState: dbError?.sqlState,
+        sqlMessage: dbError?.sqlMessage
+      });
+      throw dbError;
+    }
     const sessionToken = await sdk.createSessionToken(openid, {
       name: userInfo?.nickName || "",
       expiresInMs: ONE_YEAR_MS

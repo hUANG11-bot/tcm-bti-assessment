@@ -97,13 +97,31 @@ router.post('/login', async (req: Request, res: Response) => {
     // 使用 openid 作为用户标识
     // 注意：这里假设 openid 就是用户的唯一标识
     // 实际项目中可能需要根据业务需求调整
-    await upsertUser({
+    console.log('[WeChat Login] 准备创建/更新用户:', {
       openId: openid,
       name: userInfo?.nickName || null,
-      email: null,
-      loginMethod: 'wechat_miniprogram',
-      lastSignedIn: new Date(),
     });
+    
+    try {
+      await upsertUser({
+        openId: openid,
+        name: userInfo?.nickName || null,
+        email: null,
+        loginMethod: 'wechat_miniprogram',
+        lastSignedIn: new Date(),
+      });
+      console.log('[WeChat Login] 用户创建/更新成功');
+    } catch (dbError: any) {
+      console.error('[WeChat Login] 数据库操作失败:', dbError);
+      console.error('[WeChat Login] 错误详情:', {
+        message: dbError?.message,
+        code: dbError?.code,
+        errno: dbError?.errno,
+        sqlState: dbError?.sqlState,
+        sqlMessage: dbError?.sqlMessage,
+      });
+      throw dbError;
+    }
 
     // 3. 创建 session token
     const sessionToken = await sdk.createSessionToken(openid, {

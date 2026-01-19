@@ -1549,14 +1549,14 @@ var appRouter = router({
             content: z2.string()
           })
         ),
-        bodyType: z2.string().optional(),
+        bodyType: z2.string().nullish(),
         // 用户主要体质类型，用于上下文
-        secondaryType: z2.string().optional(),
+        secondaryType: z2.string().nullish(),
         // 用户次要体质类型
-        age: z2.number().optional(),
-        // 用户年龄
-        gender: z2.string().optional()
-        // 用户性别
+        age: z2.number().nullish(),
+        // 用户年龄（允许 null）
+        gender: z2.string().nullish()
+        // 用户性别（允许 null）
       })
     ).mutation(async ({ input, ctx }) => {
       try {
@@ -1568,14 +1568,14 @@ var appRouter = router({
           }
           userInfoParts.push(bodyTypeDesc);
         }
-        if (input.age) {
+        if (input.age != null) {
           userInfoParts.push(`\u5E74\u9F84\uFF1A${input.age}\u5C81`);
         }
         if (input.gender) {
           userInfoParts.push(`\u6027\u522B\uFF1A${input.gender}`);
         }
-        let finalAge = input.age;
-        let finalGender = input.gender;
+        let finalAge = input.age ?? void 0;
+        let finalGender = input.gender ?? void 0;
         if (ctx.user && (!finalAge || !finalGender)) {
           if (!finalGender && ctx.user.gender) {
             finalGender = ctx.user.gender;

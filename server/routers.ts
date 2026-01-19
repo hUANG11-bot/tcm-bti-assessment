@@ -366,10 +366,10 @@ export const appRouter = router({
               content: z.string(),
             })
           ),
-          bodyType: z.string().optional(), // 用户主要体质类型，用于上下文
-          secondaryType: z.string().optional(), // 用户次要体质类型
-          age: z.number().optional(), // 用户年龄
-          gender: z.string().optional(), // 用户性别
+          bodyType: z.string().nullish(), // 用户主要体质类型，用于上下文
+          secondaryType: z.string().nullish(), // 用户次要体质类型
+          age: z.number().nullish(), // 用户年龄（允许 null）
+          gender: z.string().nullish(), // 用户性别（允许 null）
         })
       )
       .mutation(async ({ input, ctx }) => {
@@ -386,7 +386,7 @@ export const appRouter = router({
             userInfoParts.push(bodyTypeDesc);
           }
           
-          if (input.age) {
+          if (input.age != null) {
             userInfoParts.push(`年龄：${input.age}岁`);
           }
           
@@ -395,8 +395,9 @@ export const appRouter = router({
           }
           
           // 如果没有传入这些信息，尝试从用户信息中获取
-          let finalAge = input.age;
-          let finalGender = input.gender;
+          // 将 null 转换为 undefined，以便后续判断
+          let finalAge = input.age ?? undefined;
+          let finalGender = input.gender ?? undefined;
           
           if (ctx.user && (!finalAge || !finalGender)) {
             // 尝试从用户信息中获取

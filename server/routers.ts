@@ -88,18 +88,44 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ ctx, input }) => {
-        const assessment = await createAssessment({
-          userId: ctx.user.id,
-          age: input.age,
-          gender: input.gender,
-          habits: JSON.stringify(input.habits),
-          answers: JSON.stringify(input.answers),
-          primaryType: input.primaryType,
-          secondaryType: input.secondaryType || null,
-          scores: JSON.stringify(input.scores),
-          fullReport: JSON.stringify(input.fullReport),
-        });
-        return assessment;
+        try {
+          console.log(`[assessment.create] 开始创建测评记录 - 用户ID: ${ctx.user.id}`);
+          console.log(`[assessment.create] 输入数据:`, {
+            age: input.age,
+            gender: input.gender,
+            primaryType: input.primaryType,
+            secondaryType: input.secondaryType,
+            habitsCount: input.habits?.length || 0,
+            answersCount: Object.keys(input.answers || {}).length,
+          });
+
+          const assessment = await createAssessment({
+            userId: ctx.user.id,
+            age: input.age,
+            gender: input.gender,
+            habits: JSON.stringify(input.habits),
+            answers: JSON.stringify(input.answers),
+            primaryType: input.primaryType,
+            secondaryType: input.secondaryType || null,
+            scores: JSON.stringify(input.scores),
+            fullReport: JSON.stringify(input.fullReport),
+          });
+
+          console.log(`[assessment.create] 创建成功，记录ID: ${assessment.id}`);
+          return assessment;
+        } catch (error: any) {
+          console.error(`[assessment.create] 创建失败 - 用户ID: ${ctx.user.id}`, error);
+          console.error(`[assessment.create] 错误详情:`, {
+            message: error?.message,
+            stack: error?.stack,
+            name: error?.name,
+            code: error?.code,
+            errno: error?.errno,
+            sqlState: error?.sqlState,
+            sqlMessage: error?.sqlMessage,
+          });
+          throw error;
+        }
       }),
 
     // 获取当前用户的测评历史
@@ -340,15 +366,78 @@ export const appRouter = router({
               content: z.string(),
             })
           ),
-          bodyType: z.string().optional(), // 用户体质类型，用于上下文
+          bodyType: z.string().optional(), // 用户主要体质类型，用于上下文
+          secondaryType: z.string().optional(), // 用户次要体质类型
+          age: z.number().optional(), // 用户年龄
+          gender: z.string().optional(), // 用户性别
         })
       )
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         try {
+          // 构建用户信息描述
+          const userInfoParts: string[] = [];
+          
+          // 构建体质类型描述
+          if (input.bodyType) {
+            let bodyTypeDesc = `体质类型：${input.bodyType}`;
+            if (input.secondaryType) {
+              bodyTypeDesc += `，兼有${input.secondaryType}`;
+            }
+            userInfoParts.push(bodyTypeDesc);
+          }
+          
+          if (input.age) {
+            userInfoParts.push(`年龄：${input.age}岁`);
+          }
+          
+          if (input.gender) {
+            userInfoParts.push(`性别：${input.gender}`);
+          }
+          
+          // 如果没有传入这些信息，尝试从用户信息中获取
+          let finalAge = input.age;
+          let finalGender = input.gender;
+          
+          if (ctx.user && (!finalAge || !finalGender)) {
+            // 尝试从用户信息中获取
+            if (!finalGender && ctx.user.gender) {
+              finalGender = ctx.user.gender;
+            }
+            
+            // 如果有birthDate，计算年龄
+            if (!finalAge && ctx.user.birthDate) {
+              try {
+                const birthDate = new Date(ctx.user.birthDate);
+                const today = new Date();
+                const age = today.getFullYear() - birthDate.getFullYear();
+                const monthDiff = today.getMonth() - birthDate.getMonth();
+                if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+                  finalAge = age - 1;
+                } else {
+                  finalAge = age;
+                }
+              } catch (e) {
+                // 忽略日期解析错误
+              }
+            }
+            
+            // 更新用户信息描述
+            if (finalAge && !userInfoParts.some(p => p.includes('年龄'))) {
+              userInfoParts.push(`年龄：${finalAge}岁`);
+            }
+            if (finalGender && !userInfoParts.some(p => p.includes('性别'))) {
+              userInfoParts.push(`性别：${finalGender}`);
+            }
+          }
+          
+          const userInfoText = userInfoParts.length > 0 
+            ? `当前咨询用户的基本信息：${userInfoParts.join('，')}。` 
+            : '';
+          
           // 构建系统提示词（中医专家角色）
           const systemMessage: Message = {
             role: 'system',
-            content: `你是一位经验丰富的中医专家，擅长体质辨识和健康调理。${input.bodyType ? `当前咨询用户的体质类型是：${input.bodyType}。` : ''}请用专业但易懂的语言回答用户的问题，提供实用的中医养生建议。回答要简洁明了，控制在200字以内。`,
+            content: `你是一位经验丰富的中医专家，擅长体质辨识和健康调理。${userInfoText}请结合用户的这些信息，用专业但易懂的语言回答用户的问题，提供个性化的中医养生建议。回答要简洁明了，控制在200字以内。`,
           };
 
           // 构建消息列表

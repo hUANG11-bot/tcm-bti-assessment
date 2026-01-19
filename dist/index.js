@@ -29,6 +29,8 @@ var users = mysqlTable("users", {
   name: text("name"),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
+  birthDate: varchar("birthDate", { length: 20 }),
+  gender: varchar("gender", { length: 10 }),
   role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -624,15 +626,47 @@ async function createAssessment(data) {
   if (!db) {
     throw new Error("Database not available");
   }
-  const [result] = await db.insert(assessments).values(data).$returningId();
-  if (!result) {
-    throw new Error("Failed to create assessment");
+  try {
+    console.log(`[createAssessment] \u5F00\u59CB\u521B\u5EFA\u6D4B\u8BC4\u8BB0\u5F55 - \u7528\u6237ID: ${data.userId}`);
+    console.log(`[createAssessment] \u6570\u636E:`, {
+      userId: data.userId,
+      age: data.age,
+      gender: data.gender,
+      primaryType: data.primaryType,
+      secondaryType: data.secondaryType
+    });
+    const [result] = await db.insert(assessments).values(data).$returningId();
+    if (!result) {
+      console.error("[createAssessment] \u63D2\u5165\u5931\u8D25\uFF0C\u672A\u8FD4\u56DEID");
+      throw new Error("Failed to create assessment");
+    }
+    console.log(`[createAssessment] \u63D2\u5165\u6210\u529F\uFF0C\u8BB0\u5F55ID: ${result.id}`);
+    const [assessment] = await db.select().from(assessments).where(eq2(assessments.id, result.id)).limit(1);
+    if (!assessment) {
+      console.error(`[createAssessment] \u65E0\u6CD5\u83B7\u53D6\u521A\u521B\u5EFA\u7684\u8BB0\u5F55\uFF0CID: ${result.id}`);
+      throw new Error("Failed to retrieve created assessment");
+    }
+    console.log(`[createAssessment] \u521B\u5EFA\u6210\u529F\uFF0C\u8BB0\u5F55ID: ${assessment.id}`);
+    return assessment;
+  } catch (error) {
+    console.error("[createAssessment] \u521B\u5EFA\u5931\u8D25:", error);
+    console.error("[createAssessment] \u9519\u8BEF\u7C7B\u578B:", error?.constructor?.name);
+    console.error("[createAssessment] \u9519\u8BEF\u6D88\u606F:", error?.message);
+    console.error("[createAssessment] \u9519\u8BEF\u5806\u6808:", error?.stack);
+    if (error?.code) {
+      console.error("[createAssessment] \u9519\u8BEF\u4EE3\u7801:", error.code);
+    }
+    if (error?.errno) {
+      console.error("[createAssessment] \u9519\u8BEF\u7F16\u53F7:", error.errno);
+    }
+    if (error?.sqlState) {
+      console.error("[createAssessment] SQL\u72B6\u6001:", error.sqlState);
+    }
+    if (error?.sqlMessage) {
+      console.error("[createAssessment] SQL\u6D88\u606F:", error.sqlMessage);
+    }
+    throw error;
   }
-  const [assessment] = await db.select().from(assessments).where(eq2(assessments.id, result.id)).limit(1);
-  if (!assessment) {
-    throw new Error("Failed to retrieve created assessment");
-  }
-  return assessment;
 }
 async function getUserAssessments(userId) {
   const db = await getDb();
@@ -1252,18 +1286,42 @@ var appRouter = router({
         fullReport: z2.any()
       })
     ).mutation(async ({ ctx, input }) => {
-      const assessment = await createAssessment({
-        userId: ctx.user.id,
-        age: input.age,
-        gender: input.gender,
-        habits: JSON.stringify(input.habits),
-        answers: JSON.stringify(input.answers),
-        primaryType: input.primaryType,
-        secondaryType: input.secondaryType || null,
-        scores: JSON.stringify(input.scores),
-        fullReport: JSON.stringify(input.fullReport)
-      });
-      return assessment;
+      try {
+        console.log(`[assessment.create] \u5F00\u59CB\u521B\u5EFA\u6D4B\u8BC4\u8BB0\u5F55 - \u7528\u6237ID: ${ctx.user.id}`);
+        console.log(`[assessment.create] \u8F93\u5165\u6570\u636E:`, {
+          age: input.age,
+          gender: input.gender,
+          primaryType: input.primaryType,
+          secondaryType: input.secondaryType,
+          habitsCount: input.habits?.length || 0,
+          answersCount: Object.keys(input.answers || {}).length
+        });
+        const assessment = await createAssessment({
+          userId: ctx.user.id,
+          age: input.age,
+          gender: input.gender,
+          habits: JSON.stringify(input.habits),
+          answers: JSON.stringify(input.answers),
+          primaryType: input.primaryType,
+          secondaryType: input.secondaryType || null,
+          scores: JSON.stringify(input.scores),
+          fullReport: JSON.stringify(input.fullReport)
+        });
+        console.log(`[assessment.create] \u521B\u5EFA\u6210\u529F\uFF0C\u8BB0\u5F55ID: ${assessment.id}`);
+        return assessment;
+      } catch (error) {
+        console.error(`[assessment.create] \u521B\u5EFA\u5931\u8D25 - \u7528\u6237ID: ${ctx.user.id}`, error);
+        console.error(`[assessment.create] \u9519\u8BEF\u8BE6\u60C5:`, {
+          message: error?.message,
+          stack: error?.stack,
+          name: error?.name,
+          code: error?.code,
+          errno: error?.errno,
+          sqlState: error?.sqlState,
+          sqlMessage: error?.sqlMessage
+        });
+        throw error;
+      }
     }),
     // 获取当前用户的测评历史
     myAssessments: protectedProcedure.query(async ({ ctx }) => {
@@ -1462,14 +1520,62 @@ var appRouter = router({
             content: z2.string()
           })
         ),
-        bodyType: z2.string().optional()
-        // 用户体质类型，用于上下文
+        bodyType: z2.string().optional(),
+        // 用户主要体质类型，用于上下文
+        secondaryType: z2.string().optional(),
+        // 用户次要体质类型
+        age: z2.number().optional(),
+        // 用户年龄
+        gender: z2.string().optional()
+        // 用户性别
       })
-    ).mutation(async ({ input }) => {
+    ).mutation(async ({ input, ctx }) => {
       try {
+        const userInfoParts = [];
+        if (input.bodyType) {
+          let bodyTypeDesc = `\u4F53\u8D28\u7C7B\u578B\uFF1A${input.bodyType}`;
+          if (input.secondaryType) {
+            bodyTypeDesc += `\uFF0C\u517C\u6709${input.secondaryType}`;
+          }
+          userInfoParts.push(bodyTypeDesc);
+        }
+        if (input.age) {
+          userInfoParts.push(`\u5E74\u9F84\uFF1A${input.age}\u5C81`);
+        }
+        if (input.gender) {
+          userInfoParts.push(`\u6027\u522B\uFF1A${input.gender}`);
+        }
+        let finalAge = input.age;
+        let finalGender = input.gender;
+        if (ctx.user && (!finalAge || !finalGender)) {
+          if (!finalGender && ctx.user.gender) {
+            finalGender = ctx.user.gender;
+          }
+          if (!finalAge && ctx.user.birthDate) {
+            try {
+              const birthDate = new Date(ctx.user.birthDate);
+              const today = /* @__PURE__ */ new Date();
+              const age = today.getFullYear() - birthDate.getFullYear();
+              const monthDiff = today.getMonth() - birthDate.getMonth();
+              if (monthDiff < 0 || monthDiff === 0 && today.getDate() < birthDate.getDate()) {
+                finalAge = age - 1;
+              } else {
+                finalAge = age;
+              }
+            } catch (e) {
+            }
+          }
+          if (finalAge && !userInfoParts.some((p) => p.includes("\u5E74\u9F84"))) {
+            userInfoParts.push(`\u5E74\u9F84\uFF1A${finalAge}\u5C81`);
+          }
+          if (finalGender && !userInfoParts.some((p) => p.includes("\u6027\u522B"))) {
+            userInfoParts.push(`\u6027\u522B\uFF1A${finalGender}`);
+          }
+        }
+        const userInfoText = userInfoParts.length > 0 ? `\u5F53\u524D\u54A8\u8BE2\u7528\u6237\u7684\u57FA\u672C\u4FE1\u606F\uFF1A${userInfoParts.join("\uFF0C")}\u3002` : "";
         const systemMessage = {
           role: "system",
-          content: `\u4F60\u662F\u4E00\u4F4D\u7ECF\u9A8C\u4E30\u5BCC\u7684\u4E2D\u533B\u4E13\u5BB6\uFF0C\u64C5\u957F\u4F53\u8D28\u8FA8\u8BC6\u548C\u5065\u5EB7\u8C03\u7406\u3002${input.bodyType ? `\u5F53\u524D\u54A8\u8BE2\u7528\u6237\u7684\u4F53\u8D28\u7C7B\u578B\u662F\uFF1A${input.bodyType}\u3002` : ""}\u8BF7\u7528\u4E13\u4E1A\u4F46\u6613\u61C2\u7684\u8BED\u8A00\u56DE\u7B54\u7528\u6237\u7684\u95EE\u9898\uFF0C\u63D0\u4F9B\u5B9E\u7528\u7684\u4E2D\u533B\u517B\u751F\u5EFA\u8BAE\u3002\u56DE\u7B54\u8981\u7B80\u6D01\u660E\u4E86\uFF0C\u63A7\u5236\u5728200\u5B57\u4EE5\u5185\u3002`
+          content: `\u4F60\u662F\u4E00\u4F4D\u7ECF\u9A8C\u4E30\u5BCC\u7684\u4E2D\u533B\u4E13\u5BB6\uFF0C\u64C5\u957F\u4F53\u8D28\u8FA8\u8BC6\u548C\u5065\u5EB7\u8C03\u7406\u3002${userInfoText}\u8BF7\u7ED3\u5408\u7528\u6237\u7684\u8FD9\u4E9B\u4FE1\u606F\uFF0C\u7528\u4E13\u4E1A\u4F46\u6613\u61C2\u7684\u8BED\u8A00\u56DE\u7B54\u7528\u6237\u7684\u95EE\u9898\uFF0C\u63D0\u4F9B\u4E2A\u6027\u5316\u7684\u4E2D\u533B\u517B\u751F\u5EFA\u8BAE\u3002\u56DE\u7B54\u8981\u7B80\u6D01\u660E\u4E86\uFF0C\u63A7\u5236\u5728200\u5B57\u4EE5\u5185\u3002`
         };
         const messages = [
           systemMessage,

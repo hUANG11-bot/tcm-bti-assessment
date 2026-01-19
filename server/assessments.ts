@@ -11,24 +11,58 @@ export async function createAssessment(data: InsertAssessment): Promise<Assessme
     throw new Error("Database not available");
   }
 
-  const [result] = await db.insert(assessments).values(data).$returningId();
-  
-  if (!result) {
-    throw new Error("Failed to create assessment");
+  try {
+    console.log(`[createAssessment] 开始创建测评记录 - 用户ID: ${data.userId}`);
+    console.log(`[createAssessment] 数据:`, {
+      userId: data.userId,
+      age: data.age,
+      gender: data.gender,
+      primaryType: data.primaryType,
+      secondaryType: data.secondaryType,
+    });
+
+    const [result] = await db.insert(assessments).values(data).$returningId();
+    
+    if (!result) {
+      console.error("[createAssessment] 插入失败，未返回ID");
+      throw new Error("Failed to create assessment");
+    }
+
+    console.log(`[createAssessment] 插入成功，记录ID: ${result.id}`);
+
+    // 获取刚创建的记录
+    const [assessment] = await db
+      .select()
+      .from(assessments)
+      .where(eq(assessments.id, result.id))
+      .limit(1);
+
+    if (!assessment) {
+      console.error(`[createAssessment] 无法获取刚创建的记录，ID: ${result.id}`);
+      throw new Error("Failed to retrieve created assessment");
+    }
+
+    console.log(`[createAssessment] 创建成功，记录ID: ${assessment.id}`);
+    return assessment;
+  } catch (error: any) {
+    console.error("[createAssessment] 创建失败:", error);
+    console.error("[createAssessment] 错误类型:", error?.constructor?.name);
+    console.error("[createAssessment] 错误消息:", error?.message);
+    console.error("[createAssessment] 错误堆栈:", error?.stack);
+    if (error?.code) {
+      console.error("[createAssessment] 错误代码:", error.code);
+    }
+    if (error?.errno) {
+      console.error("[createAssessment] 错误编号:", error.errno);
+    }
+    if (error?.sqlState) {
+      console.error("[createAssessment] SQL状态:", error.sqlState);
+    }
+    if (error?.sqlMessage) {
+      console.error("[createAssessment] SQL消息:", error.sqlMessage);
+    }
+    throw error;
   }
-
-  // 获取刚创建的记录
-  const [assessment] = await db
-    .select()
-    .from(assessments)
-    .where(eq(assessments.id, result.id))
-    .limit(1);
-
-  if (!assessment) {
-    throw new Error("Failed to retrieve created assessment");
-  }
-
-  return assessment;
 }
 
 /**

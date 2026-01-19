@@ -23,20 +23,34 @@ npm run db:push
 1. 根据 `drizzle/schema.ts` 生成迁移文件
 2. 自动执行迁移，将数据库表结构同步到最新状态
 
-### 方法 2：手动执行 SQL（如果方法 1 失败）
+### 方法 2：手动执行 SQL（推荐，如果方法 1 失败）
 
 连接到数据库，执行以下 SQL：
 
 ```sql
--- 添加 birthDate 字段
+-- 检查字段是否已存在（可选）
+-- 如果字段已存在，这些语句会报错，但不会影响数据库
+
+-- 添加 birthDate 字段（如果不存在）
 ALTER TABLE `users` 
 ADD COLUMN `birthDate` VARCHAR(20) NULL 
 AFTER `loginMethod`;
 
--- 添加 gender 字段
+-- 添加 gender 字段（如果不存在）
 ALTER TABLE `users` 
 ADD COLUMN `gender` VARCHAR(10) NULL 
 AFTER `birthDate`;
+```
+
+**注意**：如果字段已存在，执行上述 SQL 会报错。可以先检查字段是否存在：
+
+```sql
+-- 检查 users 表的结构
+DESCRIBE `users`;
+
+-- 或者
+SHOW COLUMNS FROM `users` LIKE 'birthDate';
+SHOW COLUMNS FROM `users` LIKE 'gender';
 ```
 
 ### 方法 3：在微信云托管中执行

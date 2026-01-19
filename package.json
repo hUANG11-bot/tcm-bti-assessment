@@ -17,6 +17,7 @@
     "fix:wechat-dist": "node scripts/fix-wechat-dist.js",
     "fix:common-js": "node scripts/fix-common-js-space.js",
     "fix:all": "node scripts/fix-all-files.js",
+    "verify:fix": "node scripts/verify-fix.js",
     "create-admin": "tsx scripts/create-admin.ts",
     "check-wechat": "tsx scripts/check-wechat-config.ts",
     "generate-jwt": "tsx scripts/generate-jwt-secret.ts",

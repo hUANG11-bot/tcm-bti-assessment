@@ -394,11 +394,30 @@ export const appRouter = router({
             userInfoParts.push(`性别：${input.gender}`);
           }
           
-          // 如果没有传入这些信息，尝试从用户信息中获取
+          // 如果没有传入这些信息，尝试从用户信息或测评记录中获取
           // 将 null 转换为 undefined，以便后续判断
           let finalAge = input.age ?? undefined;
           let finalGender = input.gender ?? undefined;
           
+          // 优先从测评记录中获取（更可靠）
+          if (ctx.user && (!finalAge || !finalGender)) {
+            try {
+              const assessments = await getUserAssessments(ctx.user.id);
+              if (assessments && assessments.length > 0) {
+                const latestAssessment = assessments[0]; // 已经按时间倒序排列
+                if (!finalAge && latestAssessment.age) {
+                  finalAge = latestAssessment.age;
+                }
+                if (!finalGender && latestAssessment.gender) {
+                  finalGender = latestAssessment.gender;
+                }
+              }
+            } catch (e) {
+              console.error('[AI Chat] 获取测评记录失败:', e);
+            }
+          }
+          
+          // 如果还是没有，尝试从用户信息中获取
           if (ctx.user && (!finalAge || !finalGender)) {
             // 尝试从用户信息中获取
             if (!finalGender && ctx.user.gender) {
@@ -421,14 +440,14 @@ export const appRouter = router({
                 // 忽略日期解析错误
               }
             }
-            
-            // 更新用户信息描述
-            if (finalAge && !userInfoParts.some(p => p.includes('年龄'))) {
-              userInfoParts.push(`年龄：${finalAge}岁`);
-            }
-            if (finalGender && !userInfoParts.some(p => p.includes('性别'))) {
-              userInfoParts.push(`性别：${finalGender}`);
-            }
+          }
+          
+          // 更新用户信息描述
+          if (finalAge && !userInfoParts.some(p => p.includes('年龄'))) {
+            userInfoParts.push(`年龄：${finalAge}岁`);
+          }
+          if (finalGender && !userInfoParts.some(p => p.includes('性别'))) {
+            userInfoParts.push(`性别：${finalGender}`);
           }
           
           const userInfoText = userInfoParts.length > 0 

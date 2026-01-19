@@ -19,6 +19,7 @@
     "fix:all": "node scripts/fix-all-files.js",
     "verify:fix": "node scripts/verify-fix.js",
     "fix:url-encoding": "node scripts/fix-url-encoding-space.js",
+    "fix:pages": "node scripts/fix-pages-api-url.js",
     "create-admin": "tsx scripts/create-admin.ts",
     "check-wechat": "tsx scripts/check-wechat-config.ts",
     "generate-jwt": "tsx scripts/generate-jwt-secret.ts",

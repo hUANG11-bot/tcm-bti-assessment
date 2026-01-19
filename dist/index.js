@@ -640,7 +640,8 @@ async function getUserAssessments(userId) {
     throw new Error("Database not available");
   }
   try {
-    return db.select({
+    console.log(`[getUserAssessments] \u5F00\u59CB\u67E5\u8BE2\u7528\u6237 ${userId} \u7684\u6D4B\u8BC4\u8BB0\u5F55`);
+    const result = await db.select({
       id: assessments.id,
       userId: assessments.userId,
       age: assessments.age,
@@ -654,8 +655,25 @@ async function getUserAssessments(userId) {
       createdAt: assessments.createdAt,
       updatedAt: assessments.updatedAt
     }).from(assessments).where(eq2(assessments.userId, userId)).orderBy(desc(assessments.createdAt));
+    console.log(`[getUserAssessments] \u67E5\u8BE2\u6210\u529F\uFF0C\u8FD4\u56DE ${result.length} \u6761\u8BB0\u5F55`);
+    return result;
   } catch (error) {
     console.error("[getUserAssessments] \u67E5\u8BE2\u5931\u8D25:", error);
+    console.error("[getUserAssessments] \u9519\u8BEF\u7C7B\u578B:", error?.constructor?.name);
+    console.error("[getUserAssessments] \u9519\u8BEF\u6D88\u606F:", error?.message);
+    console.error("[getUserAssessments] \u9519\u8BEF\u5806\u6808:", error?.stack);
+    if (error?.code) {
+      console.error("[getUserAssessments] \u9519\u8BEF\u4EE3\u7801:", error.code);
+    }
+    if (error?.errno) {
+      console.error("[getUserAssessments] \u9519\u8BEF\u7F16\u53F7:", error.errno);
+    }
+    if (error?.sqlState) {
+      console.error("[getUserAssessments] SQL\u72B6\u6001:", error.sqlState);
+    }
+    if (error?.sqlMessage) {
+      console.error("[getUserAssessments] SQL\u6D88\u606F:", error.sqlMessage);
+    }
     throw error;
   }
 }

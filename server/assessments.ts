@@ -41,7 +41,8 @@ export async function getUserAssessments(userId: number): Promise<Assessment[]> 
   }
 
   try {
-    return db
+    console.log(`[getUserAssessments] 开始查询用户 ${userId} 的测评记录`);
+    const result = await db
       .select({
         id: assessments.id,
         userId: assessments.userId,
@@ -59,8 +60,25 @@ export async function getUserAssessments(userId: number): Promise<Assessment[]> 
       .from(assessments)
       .where(eq(assessments.userId, userId))
       .orderBy(desc(assessments.createdAt));
-  } catch (error) {
+    console.log(`[getUserAssessments] 查询成功，返回 ${result.length} 条记录`);
+    return result;
+  } catch (error: any) {
     console.error("[getUserAssessments] 查询失败:", error);
+    console.error("[getUserAssessments] 错误类型:", error?.constructor?.name);
+    console.error("[getUserAssessments] 错误消息:", error?.message);
+    console.error("[getUserAssessments] 错误堆栈:", error?.stack);
+    if (error?.code) {
+      console.error("[getUserAssessments] 错误代码:", error.code);
+    }
+    if (error?.errno) {
+      console.error("[getUserAssessments] 错误编号:", error.errno);
+    }
+    if (error?.sqlState) {
+      console.error("[getUserAssessments] SQL状态:", error.sqlState);
+    }
+    if (error?.sqlMessage) {
+      console.error("[getUserAssessments] SQL消息:", error.sqlMessage);
+    }
     throw error;
   }
 }

@@ -25,7 +25,7 @@ class App extends Component {
     console.log('[App] componentDidHide')
   }
 
-  componentDidCatch(error: Error, errorInfo: any) {
+  componentDidCatch(error, errorInfo) {
     // 捕获子组件树中的错误
     console.error('[App] componentDidCatch:', error, errorInfo)
     Taro.showToast({

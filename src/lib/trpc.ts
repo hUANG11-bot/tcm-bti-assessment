@@ -26,8 +26,8 @@ export const queryClient = new QueryClient({
 declare const TARO_APP_API_URL: string
 
 // 获取 API 地址
-// 优先使用 TARO_APP_API_URL（由 defineConstants 注入），否则使用自定义域名
-const API_BASE_URL = typeof TARO_APP_API_URL !== 'undefined' ? TARO_APP_API_URL : 'https://er1.store'
+// 优先使用 TARO_APP_API_URL（由 defineConstants 注入），否则使用默认值
+const API_BASE_URL = typeof TARO_APP_API_URL !== 'undefined' ? TARO_APP_API_URL : (process.env.NODE_ENV === 'development' ? 'http://localhost:3000' : 'https://er1.store')
 
 console.log('[tRPC] API Base URL:', API_BASE_URL)
 

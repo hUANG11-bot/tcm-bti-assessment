@@ -9,7 +9,7 @@ import type { Message, InvokeParams, InvokeResult } from "./llm";
 /**
  * AI服务提供商类型
  */
-export type AIProvider = 'qwen' | 'ernie' | 'openai' | 'deepseek' | 'custom';
+export type AIProvider = 'qwen' | 'ernie' | 'openai' | 'deepseek' | 'custom' | 'minimax';
 
 /**
  * 调用通义千问API
@@ -80,12 +80,12 @@ async function invokeOpenAICompatible(
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'gpt-3.5-turbo', // 或 gpt-4, 根据服务商调整
+      model: (apiUrl.includes('minimax.io') || apiUrl.includes('minimaxi.com')) ? 'MiniMax-M2.1' : 'gpt-3.5-turbo', // MiniMax 使用 MiniMax-M2.1，其他使用 gpt-3.5-turbo
       messages: messages.map(msg => ({
         role: msg.role,
         content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
       })),
-      max_tokens: 2000,
+      max_tokens: (apiUrl.includes('minimax.io') || apiUrl.includes('minimaxi.com')) ? 2048 : 2000, // MiniMax 推荐使用 2048
       temperature: 0.7,
     }),
   });
@@ -129,29 +129,7 @@ async function invokeDeepSeek(messages: Message[], apiKey: string): Promise<Invo
 
   if (!response.ok) {
     const errorText = await response.text();
-    let errorMessage = `DeepSeek API调用失败: ${response.status} ${response.statusText}`;
-    
-    // 尝试解析错误详情
-    try {
-      const errorData = JSON.parse(errorText);
-      if (errorData.error?.message) {
-        errorMessage += ` – ${errorData.error.message}`;
-        
-        // 针对常见错误提供更友好的提示
-        if (response.status === 402 || errorData.error.message.includes('Balance') || errorData.error.message.includes('余额')) {
-          errorMessage = `DeepSeek账户余额不足。请登录 https://platform.deepseek.com 充值后重试。`;
-        } else if (response.status === 401) {
-          errorMessage = `DeepSeek API密钥无效。请检查 .env 文件中的 AI_API_KEY 是否正确。`;
-        } else if (response.status === 429) {
-          errorMessage = `DeepSeek API调用次数超限。请稍后重试或检查使用量。`;
-        }
-      }
-    } catch {
-      // 如果无法解析JSON，使用原始错误文本
-      errorMessage += ` – ${errorText}`;
-    }
-    
-    throw new Error(errorMessage);
+    throw new Error(`DeepSeek API调用失败: ${response.status} ${response.statusText} – ${errorText}`);
   }
 
   const data = await response.json();
@@ -203,8 +181,9 @@ export async function invokeChineseLLM(params: InvokeParams): Promise<InvokeResu
         return await invokeDeepSeek(messages, apiKey);
       
       case 'custom':
+      case 'minimax':
         if (!apiUrl) {
-          throw new Error('使用 custom 模式时，必须配置 AI_API_URL');
+          throw new Error('使用 custom/minimax 模式时，必须配置 AI_API_URL');
         }
         return await invokeCustom(messages, apiKey, apiUrl);
       
@@ -214,6 +193,21 @@ export async function invokeChineseLLM(params: InvokeParams): Promise<InvokeResu
     }
   } catch (error: any) {
     console.error('[Chinese LLM] Error:', error);
-    throw error;
+    
+    // 提供更详细的错误信息
+    let errorMessage = error.message || '未知错误';
+    
+    // 检查是否是API密钥问题
+    if (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {
+      errorMessage = `API密钥无效: ${errorMessage}`;
+    } else if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
+      errorMessage = `请求频率过高: ${errorMessage}`;
+    } else if (errorMessage.includes('余额') || errorMessage.includes('balance') || errorMessage.includes('insufficient')) {
+      errorMessage = `账户余额不足: ${errorMessage}`;
+    } else if (errorMessage.includes('timeout') || errorMessage.includes('网络')) {
+      errorMessage = `网络连接超时: ${errorMessage}`;
+    }
+    
+    throw new Error(errorMessage);
   }
 }

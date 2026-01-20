@@ -1,6 +1,6 @@
 import type { CreateExpressContextOptions } from "@trpc/server/adapters/express";
-import type { User } from "../../drizzle/schema";
-import { users } from "../../drizzle/schema";
+import type { User } from "../../drizzle/schema.js";
+import { users } from "../../drizzle/schema.js";
 import { eq } from "drizzle-orm";
 import { sdk } from "./sdk";
 import { getAdminById } from "../admin-auth";
@@ -20,9 +20,8 @@ export async function createContext(
   let adminId: number | null = null;
 
   // 1. 尝试从 session cookie 获取普通用户
-  // 对于 publicProcedure，没有 session cookie 是正常的，使用 silent 模式避免警告
   try {
-    user = await sdk.authenticateRequest(opts.req, true); // silent = true，不输出警告
+    user = await sdk.authenticateRequest(opts.req);
   } catch (error) {
     // Authentication is optional for public procedures.
     user = null;

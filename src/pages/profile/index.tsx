@@ -8,6 +8,9 @@ import { Button as UIButton } from '@/components/ui/button'
 import { saveCookie } from '@/lib/cookie'
 import './index.scss'
 
+// 声明 TARO_APP_API_URL 常量（由 Taro 的 defineConstants 在编译时注入）
+declare const TARO_APP_API_URL: string
+
 export default function ProfilePage() {
   const { user, loading, isAuthenticated, logout, refresh } = useAuth()
   const [loginLoading, setLoginLoading] = useState(false)
@@ -29,8 +32,8 @@ export default function ProfilePage() {
         })
 
         // 3. 发送到后端进行登录
-        // 使用自定义域名
-        const API_BASE_URL = 'https://er1.store'
+        // 使用 TARO_APP_API_URL 或默认值
+        const API_BASE_URL = typeof TARO_APP_API_URL !== 'undefined' ? TARO_APP_API_URL : 'https://er1.store'
         const response = await Taro.request({
           url: `${API_BASE_URL}/api/wechat/login`,
           method: 'POST',
@@ -58,8 +61,8 @@ export default function ProfilePage() {
         // 如果用户拒绝授权，只使用 code 登录（匿名登录）
         if (err.errMsg && err.errMsg.includes('getUserProfile:fail')) {
           // 仅使用 code 进行登录（后端需要支持）
-          // 使用自定义域名
-          const API_BASE_URL = 'https://er1.store'
+          // 使用 TARO_APP_API_URL 或默认值
+          const API_BASE_URL = typeof TARO_APP_API_URL !== 'undefined' ? TARO_APP_API_URL : 'https://er1.store'
           const response = await Taro.request({
             url: `${API_BASE_URL}/api/wechat/login`,
             method: 'POST',

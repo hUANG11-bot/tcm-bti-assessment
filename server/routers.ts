@@ -1,4 +1,4 @@
-import { COOKIE_NAME } from "@shared/const";
+import { COOKIE_NAME } from "../shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
@@ -285,43 +285,20 @@ export const appRouter = router({
 
           // 调用LLM（优先使用国内AI服务）
           let result;
-          let lastError: any = null;
-          
           try {
             // 尝试使用国内AI服务
-            console.log('[AI Chat] 尝试使用国内AI服务...');
             result = await invokeChineseLLM({ messages });
-            console.log('[AI Chat] 国内AI服务调用成功');
           } catch (error: any) {
-            lastError = error;
-            console.warn('[AI Chat] 国内AI服务失败:', error.message);
-            
             // 如果国内服务失败，尝试使用原有服务
+            console.warn('[AI Chat] 国内AI服务失败，尝试使用备用服务:', error.message);
             try {
-              console.log('[AI Chat] 尝试使用备用服务（Forge API）...');
               result = await invokeLLM({ messages });
               console.log('[AI Chat] 备用服务调用成功');
             } catch (fallbackError: any) {
-              console.error('[AI Chat] 备用服务也失败:', fallbackError.message);
-              
-              // 提供更详细的错误信息
-              const errorDetails = [];
-              errorDetails.push(`国内AI服务错误: ${error.message}`);
-              errorDetails.push(`备用服务错误: ${fallbackError.message}`);
-              
-              // 检查配置问题
-              const aiApiKey = process.env.AI_API_KEY || '';
-              const forgeApiKey = process.env.BUILT_IN_FORGE_API_KEY || '';
-              
-              if (!aiApiKey && !forgeApiKey) {
-                throw new Error('AI服务配置错误：AI_API_KEY 和 BUILT_IN_FORGE_API_KEY 都未配置。请至少配置其中一个。');
-              } else if (!aiApiKey) {
-                throw new Error(`国内AI服务配置错误：AI_API_KEY 未配置。错误详情: ${error.message}`);
-              } else if (!forgeApiKey) {
-                throw new Error(`备用服务配置错误：BUILT_IN_FORGE_API_KEY 未配置。错误详情: ${fallbackError.message}`);
-              } else {
-                throw new Error(`所有AI服务都不可用。${errorDetails.join('; ')}`);
-              }
+              // 两个服务都失败，提供更详细的错误信息
+              const errorDetails = error.message || '未知错误';
+              const fallbackDetails = fallbackError.message || '未知错误';
+              throw new Error(`AI服务不可用。国内服务错误: ${errorDetails}；备用服务错误: ${fallbackDetails}`);
             }
           }
 

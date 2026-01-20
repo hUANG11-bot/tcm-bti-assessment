@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getDb } from '../db';
-import { adminUsers } from '../../drizzle/schema';
+import { adminUsers } from '../../drizzle/schema.js';
 import { eq } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 

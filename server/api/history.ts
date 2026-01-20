@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { eq } from 'drizzle-orm';
 import { getDb } from '../db';
-import { assessments } from '../../drizzle/schema';
+import { assessments } from '../../drizzle/schema.js';
 
 const router = Router();
 

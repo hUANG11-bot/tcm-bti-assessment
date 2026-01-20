@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { getDb } from './db';
-import { adminUsers, type AdminUser } from '../drizzle/schema';
+import { adminUsers, type AdminUser } from '../drizzle/schema.js';
 
 /**
  * 创建管理员账户

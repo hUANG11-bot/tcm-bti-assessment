@@ -1,10 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { getDb } from '../db';
 import { sdk } from '../_core/sdk';
-import { COOKIE_NAME, ONE_YEAR_MS } from '@shared/const';
+import { COOKIE_NAME, ONE_YEAR_MS } from '../../shared/const';
 import { getSessionCookieOptions } from '../_core/cookies';
-import axios from 'axios';
-import https from 'https';
 
 const router = Router();
 
@@ -45,17 +43,8 @@ router.post('/login', async (req: Request, res: Response) => {
     console.log('[WeChat Login] Calling WeChat API with AppID:', WX_APPID);
     console.log('[WeChat Login] Code length:', code?.length || 0);
     
-    // 使用 axios 替代 fetch，解决 SSL 证书验证问题
-    // 在云托管环境中，可能需要忽略 SSL 证书验证
-    const httpsAgent = new https.Agent({
-      rejectUnauthorized: false, // 在云托管环境中可能需要设置为 false
-    });
-    
-    const wxResponse = await axios.get(wxApiUrl, {
-      httpsAgent,
-      timeout: 10000, // 10秒超时
-    });
-    const wxData = wxResponse.data;
+    const wxResponse = await fetch(wxApiUrl);
+    const wxData = await wxResponse.json();
 
     if (wxData.errcode) {
       console.error('[WeChat Login] WeChat API error:', {
@@ -127,7 +116,6 @@ router.post('/login', async (req: Request, res: Response) => {
     });
 
     // 5. 返回成功响应
-    // 注意：小程序环境可能无法自动处理 cookie，所以在响应体中也返回 token
     return res.json({
       success: true,
       user: {
@@ -135,8 +123,6 @@ router.post('/login', async (req: Request, res: Response) => {
         name: userInfo?.nickName || null,
         avatar: userInfo?.avatarUrl || null,
       },
-      // 小程序需要手动管理 cookie，所以返回 token
-      sessionToken: sessionToken,
     });
   } catch (error: any) {
     console.error('[WeChat Login] Error:', error);

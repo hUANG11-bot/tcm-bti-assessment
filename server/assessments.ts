@@ -1,5 +1,5 @@
 import { eq, desc } from "drizzle-orm";
-import { assessments, type InsertAssessment, type Assessment } from "../drizzle/schema";
+import { assessments, type InsertAssessment, type Assessment } from "../drizzle/schema.js";
 import { getDb } from "./db";
 
 /**

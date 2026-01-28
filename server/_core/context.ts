@@ -23,8 +23,14 @@ export async function createContext(
   // 对于 publicProcedure，没有 session cookie 是正常的，使用 silent 模式避免警告
   try {
     user = await sdk.authenticateRequest(opts.req, true); // silent = true，不输出警告
+    if (user) {
+      console.log(`[Context] 用户认证成功 - ID: ${user.id}, openId: ${user.openId.substring(0, 10)}...`);
+    } else {
+      console.log(`[Context] 用户认证失败 - 未找到用户`);
+    }
   } catch (error) {
     // Authentication is optional for public procedures.
+    console.log(`[Context] 用户认证异常 - ${error instanceof Error ? error.message : String(error)}`);
     user = null;
   }
 

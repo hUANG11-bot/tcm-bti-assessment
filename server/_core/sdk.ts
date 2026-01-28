@@ -214,12 +214,23 @@ class SDKServer {
       const { payload } = await jwtVerify(cookieValue, secretKey, {
         algorithms: ["HS256"],
       });
-      const { openId, appId, name } = payload as Record<string, unknown>;
+      const { openId, appId, name, exp } = payload as Record<string, unknown>;
 
       // 只要求 openId 非空，appId 和 name 可以为空（微信小程序登录时可能为空）
       if (!isNonEmptyString(openId)) {
-        console.warn("[Auth] Session payload missing required fields");
+        console.warn("[Auth] Session payload missing required fields (openId)");
         return null;
+      }
+
+      // 验证 openId 格式（微信 openId 通常以 o 开头，长度约28位）
+      if (openId.length < 20 || openId.length > 40) {
+        console.warn("[Auth] Invalid openId format, length:", openId.length);
+        return null;
+      }
+
+      // 记录成功验证的 session（用于调试）
+      if (!silent) {
+        console.log("[Auth] Session verified for openId:", openId.substring(0, 10) + "...");
       }
 
       return {
@@ -279,9 +290,17 @@ class SDKServer {
     })();
     
     const sessionCookie = cookies.get(COOKIE_NAME) ?? headerSessionToken ?? authHeaderToken;
+    
+    if (!silent) {
+      console.log(`[Auth] 尝试认证 - Cookie: ${cookies.get(COOKIE_NAME) ? '有' : '无'}, Header Token: ${headerSessionToken ? '有' : '无'}, Auth Header: ${authHeaderToken ? '有' : '无'}`);
+    }
+    
     const session = await this.verifySession(sessionCookie, silent);
 
     if (!session) {
+      if (!silent) {
+        console.log(`[Auth] Session验证失败 - sessionCookie存在: ${!!sessionCookie}`);
+      }
       throw ForbiddenError("Invalid session cookie");
     }
 

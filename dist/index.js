@@ -199,7 +199,13 @@ async function getUserByOpenId(openId) {
     console.warn("[Database] Cannot get user: database not available");
     return void 0;
   }
+  console.log("[getUserByOpenId] 查询 openId:", openId);
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
+  if (result.length > 0) {
+    console.log("[getUserByOpenId] 找到用户:", { id: result[0].id, openId: result[0].openId });
+  } else {
+    console.log("[getUserByOpenId] 未找到用户");
+  }
   return result.length > 0 ? result[0] : void 0;
 }
 
@@ -431,8 +437,10 @@ var SDKServer = class {
       throw ForbiddenError("Invalid session cookie");
     }
     const sessionUserId = session.openId;
+    console.log("[Auth] Session openId from token:", sessionUserId);
     const signedInAt = /* @__PURE__ */ new Date();
     let user = await getUserByOpenId(sessionUserId);
+    console.log("[Auth] User found by openId:", user ? { id: user.id, openId: user.openId, name: user.name } : "NOT FOUND");
     if (!user) {
       try {
         const userInfo = await this.getUserInfoWithJwt(sessionCookie ?? "");
@@ -1358,12 +1366,30 @@ var appRouter = router({
         console.log(`[myAssessments] \u67E5\u8BE2\u7528\u6237 ${ctx.user.id} \u7684\u6D4B\u8BC4\u8BB0\u5F55`);
         const assessments2 = await getUserAssessments(ctx.user.id);
         console.log(`[myAssessments] \u67E5\u8BE2\u6210\u529F\uFF0C\u627E\u5230 ${assessments2.length} \u6761\u8BB0\u5F55`);
+        
+        // 安全解析 JSON
+        const safeJsonParse = (str, defaultVal) => {
+          try {
+            return JSON.parse(str);
+          } catch (e) {
+            console.error(`[myAssessments] JSON\u89E3\u6790\u5931\u8D25:`, str?.substring?.(0, 100));
+            return defaultVal;
+          }
+        };
+        
         return assessments2.map((a) => ({
-          ...a,
-          habits: JSON.parse(a.habits),
-          answers: JSON.parse(a.answers),
-          scores: JSON.parse(a.scores),
-          fullReport: JSON.parse(a.fullReport)
+          id: a.id,
+          userId: a.userId,
+          age: a.age,
+          gender: a.gender,
+          primaryType: a.primaryType,
+          secondaryType: a.secondaryType,
+          createdAt: a.createdAt instanceof Date ? a.createdAt.toISOString() : a.createdAt,
+          updatedAt: a.updatedAt instanceof Date ? a.updatedAt.toISOString() : a.updatedAt,
+          habits: safeJsonParse(a.habits, []),
+          answers: safeJsonParse(a.answers, {}),
+          scores: safeJsonParse(a.scores, {}),
+          fullReport: safeJsonParse(a.fullReport, {})
         }));
       } catch (error) {
         console.error(`[myAssessments] \u67E5\u8BE2\u5931\u8D25 - \u7528\u6237ID: ${ctx.user.id}`, error);
@@ -1398,12 +1424,22 @@ var appRouter = router({
       if (!assessment) {
         throw new Error("Assessment not found");
       }
+      const safeJsonParse = (str, defaultVal) => {
+        try { return JSON.parse(str); } catch (e) { return defaultVal; }
+      };
       return {
-        ...assessment,
-        habits: JSON.parse(assessment.habits),
-        answers: JSON.parse(assessment.answers),
-        scores: JSON.parse(assessment.scores),
-        fullReport: JSON.parse(assessment.fullReport)
+        id: assessment.id,
+        userId: assessment.userId,
+        age: assessment.age,
+        gender: assessment.gender,
+        primaryType: assessment.primaryType,
+        secondaryType: assessment.secondaryType,
+        createdAt: assessment.createdAt instanceof Date ? assessment.createdAt.toISOString() : assessment.createdAt,
+        updatedAt: assessment.updatedAt instanceof Date ? assessment.updatedAt.toISOString() : assessment.updatedAt,
+        habits: safeJsonParse(assessment.habits, []),
+        answers: safeJsonParse(assessment.answers, {}),
+        scores: safeJsonParse(assessment.scores, {}),
+        fullReport: safeJsonParse(assessment.fullReport, {})
       };
     }),
     // 删除测评记录
@@ -1941,43 +1977,100 @@ import { Router as Router3 } from "express";
 import axios2 from "axios";
 import https from "https";
 var router4 = Router3();
+
+// 用于存储已使用的 code，防止重复使用
+var usedCodes = new Map();
+var CODE_EXPIRY_MS = 5 * 60 * 1000; // 5分钟过期
+
+// 清理过期的 code
+function cleanupExpiredCodes() {
+  var now = Date.now();
+  for (var [code, data] of usedCodes.entries()) {
+    if (now - data.timestamp > CODE_EXPIRY_MS) {
+      usedCodes.delete(code);
+    }
+  }
+}
+setInterval(cleanupExpiredCodes, 60 * 1000);
+
 router4.post("/login", async (req, res) => {
+  var requestId = "REQ-" + Date.now() + "-" + Math.random().toString(36).substring(2, 8);
   try {
     const { code, userInfo } = req.body;
+    
+    console.log("[WeChat Login][" + requestId + "] ========== 新登录请求 ==========");
+    console.log("[WeChat Login][" + requestId + "] 时间:", new Date().toISOString());
+    console.log("[WeChat Login][" + requestId + "] Code:", code ? code.substring(0, 15) + "..." : "null");
+    
     if (!code) {
+      console.error("[WeChat Login][" + requestId + "] 错误: code 为空");
       return res.status(400).json({
         success: false,
         message: "\u5FAE\u4FE1\u767B\u5F55\u51ED\u8BC1 code \u4E0D\u80FD\u4E3A\u7A7A"
       });
     }
+    
+    // 检查 code 是否已被使用（防止重复提交）
+    var usedCodeData = usedCodes.get(code);
+    if (usedCodeData) {
+      console.log("[WeChat Login][" + requestId + "] Code 已被使用，返回缓存的 openid:", usedCodeData.openid);
+      
+      var existingUser = await getUserByOpenId(usedCodeData.openid);
+      var cachedSessionToken = await sdk.createSessionToken(usedCodeData.openid, {
+        name: existingUser?.name || userInfo?.nickName || "",
+        expiresInMs: ONE_YEAR_MS
+      });
+      
+      var cachedCookieOptions = getSessionCookieOptions(req);
+      res.cookie(COOKIE_NAME, cachedSessionToken, {
+        ...cachedCookieOptions,
+        maxAge: ONE_YEAR_MS
+      });
+      
+      return res.json({
+        success: true,
+        user: {
+          openId: usedCodeData.openid,
+          name: existingUser?.name || userInfo?.nickName || null,
+          avatar: existingUser?.avatar || userInfo?.avatarUrl || null
+        },
+        sessionToken: cachedSessionToken,
+        _cached: true
+      });
+    }
+    
     const WX_APPID = process.env.WX_APPID || "wx04a7af67c8f47620";
     const WX_SECRET = process.env.WX_SECRET || "";
     if (!WX_SECRET) {
-      console.error("[WeChat Login] WX_SECRET is not configured");
+      console.error("[WeChat Login][" + requestId + "] 错误: WX_SECRET 未配置");
       return res.status(500).json({
         success: false,
         message: "\u670D\u52A1\u5668\u914D\u7F6E\u9519\u8BEF\uFF0C\u8BF7\u8054\u7CFB\u7BA1\u7406\u5458"
       });
     }
     const wxApiUrl = `https://api.weixin.qq.com/sns/jscode2session?appid=${WX_APPID}&secret=${WX_SECRET}&js_code=${code}&grant_type=authorization_code`;
-    console.log("[WeChat Login] Calling WeChat API with AppID:", WX_APPID);
-    console.log("[WeChat Login] Code length:", code?.length || 0);
+    console.log("[WeChat Login][" + requestId + "] 调用微信API, AppID:", WX_APPID);
     const httpsAgent = new https.Agent({
       rejectUnauthorized: false
-      // 在云托管环境中可能需要设置为 false
     });
     const wxResponse = await axios2.get(wxApiUrl, {
       httpsAgent,
       timeout: 1e4
-      // 10秒超时
     });
     const wxData = wxResponse.data;
+    
+    console.log("[WeChat Login][" + requestId + "] 微信API响应:", {
+      hasOpenid: !!wxData.openid,
+      openidPrefix: wxData.openid ? wxData.openid.substring(0, 10) : "N/A",
+      hasSessionKey: !!wxData.session_key,
+      errcode: wxData.errcode,
+      errmsg: wxData.errmsg
+    });
+    
     if (wxData.errcode) {
-      console.error("[WeChat Login] WeChat API error:", {
+      console.error("[WeChat Login][" + requestId + "] 微信API错误:", {
         errcode: wxData.errcode,
-        errmsg: wxData.errmsg,
-        appid: WX_APPID,
-        hasSecret: !!WX_SECRET
+        errmsg: wxData.errmsg
       });
       let errorMessage = wxData.errmsg || "\u5FAE\u4FE1\u767B\u5F55\u5931\u8D25";
       if (wxData.errcode === 40013) {
@@ -1997,32 +2090,33 @@ router4.post("/login", async (req, res) => {
     }
     const { openid, session_key } = wxData;
     if (!openid) {
+      console.error("[WeChat Login][" + requestId + "] 错误: 未获取到 openid");
       return res.status(400).json({
         success: false,
         message: "\u83B7\u53D6\u7528\u6237 openid \u5931\u8D25"
       });
     }
-    console.log("[WeChat Login] \u51C6\u5907\u521B\u5EFA/\u66F4\u65B0\u7528\u6237:", {
-      openId: openid,
-      name: userInfo?.nickName || null
-    });
+    
+    // 将 code 标记为已使用
+    usedCodes.set(code, { openid: openid, timestamp: Date.now() });
+    
+    console.log("[WeChat Login][" + requestId + "] 用户 openId:", openid);
+    console.log("[WeChat Login][" + requestId + "] 用户昵称:", userInfo?.nickName || "(未提供)");
+    
     try {
       await upsertUser({
         openId: openid,
         name: userInfo?.nickName || null,
+        avatar: userInfo?.avatarUrl || null,
         email: null,
         loginMethod: "wechat_miniprogram",
         lastSignedIn: /* @__PURE__ */ new Date()
       });
-      console.log("[WeChat Login] \u7528\u6237\u521B\u5EFA/\u66F4\u65B0\u6210\u529F");
+      console.log("[WeChat Login][" + requestId + "] 用户记录已更新");
     } catch (dbError) {
-      console.error("[WeChat Login] \u6570\u636E\u5E93\u64CD\u4F5C\u5931\u8D25:", dbError);
-      console.error("[WeChat Login] \u9519\u8BEF\u8BE6\u60C5:", {
+      console.error("[WeChat Login][" + requestId + "] 数据库错误:", {
         message: dbError?.message,
-        code: dbError?.code,
-        errno: dbError?.errno,
-        sqlState: dbError?.sqlState,
-        sqlMessage: dbError?.sqlMessage
+        code: dbError?.code
       });
       throw dbError;
     }
@@ -2030,11 +2124,16 @@ router4.post("/login", async (req, res) => {
       name: userInfo?.nickName || "",
       expiresInMs: ONE_YEAR_MS
     });
+    console.log("[WeChat Login][" + requestId + "] Session token 已创建");
+    
     const cookieOptions = getSessionCookieOptions(req);
     res.cookie(COOKIE_NAME, sessionToken, {
       ...cookieOptions,
       maxAge: ONE_YEAR_MS
     });
+    
+    console.log("[WeChat Login][" + requestId + "] 登录成功, openId:", openid);
+    
     return res.json({
       success: true,
       user: {
@@ -2042,17 +2141,46 @@ router4.post("/login", async (req, res) => {
         name: userInfo?.nickName || null,
         avatar: userInfo?.avatarUrl || null
       },
-      // 小程序需要手动管理 cookie，所以返回 token
       sessionToken
     });
   } catch (error) {
-    console.error("[WeChat Login] Error:", error);
+    console.error("[WeChat Login][" + requestId + "] 异常:", error.message);
     return res.status(500).json({
       success: false,
       message: error.message || "\u767B\u5F55\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5"
     });
   }
 });
+
+// 调试接口：获取当前 session 信息
+router4.get("/debug-session", async (req, res) => {
+  try {
+    var user = await sdk.authenticateRequest(req, true);
+    if (user) {
+      return res.json({
+        authenticated: true,
+        user: {
+          id: user.id,
+          openId: user.openId,
+          name: user.name,
+          avatar: user.avatar,
+          role: user.role
+        }
+      });
+    } else {
+      return res.json({
+        authenticated: false,
+        message: "未登录或 session 无效"
+      });
+    }
+  } catch (error) {
+    return res.json({
+      authenticated: false,
+      error: error.message
+    });
+  }
+});
+
 var wechat_login_default = router4;
 
 // server/_core/index.ts

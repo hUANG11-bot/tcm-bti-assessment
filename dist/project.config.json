@@ -1,7 +1,16 @@
 {
   "description": "项目配置文件",
   "packOptions": {
-    "ignore": [],
+    "ignore": [
+      {
+        "value": "index.js",
+        "type": "file"
+      },
+      {
+        "value": "github-upload",
+        "type": "folder"
+      }
+    ],
     "include": []
   },
   "setting": {

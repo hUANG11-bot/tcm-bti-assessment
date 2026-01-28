@@ -1,4 +1,4 @@
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 import { assessments, type InsertAssessment, type Assessment } from "../drizzle/schema";
 import { getDb } from "./db";
 
@@ -253,4 +253,51 @@ export async function getAssessmentStats() {
     genderDistribution,
     ageGroups,
   };
+}
+
+/**
+ * 管理员：根据用户ID或手机号获取测评记录
+ */
+export async function getAssessmentsByUserOrPhone(
+  userId?: number,
+  phone?: string
+): Promise<Assessment[]> {
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database not available");
+  }
+
+  if (!userId && !phone) {
+    throw new Error("必须提供用户ID或手机号");
+  }
+
+  try {
+    console.log(`[getAssessmentsByUserOrPhone] 开始查询 - userId: ${userId}, phone: ${phone}`);
+    
+    let query = db.select().from(assessments);
+    
+    // 构建查询条件
+    const conditions = [];
+    if (userId) {
+      conditions.push(eq(assessments.userId, userId));
+    }
+    if (phone) {
+      conditions.push(eq(assessments.phone, phone));
+    }
+    
+    // 应用查询条件
+    if (conditions.length > 1) {
+      query = query.where(and(...conditions));
+    } else if (conditions.length === 1) {
+      query = query.where(conditions[0]);
+    }
+    
+    const result = await query.orderBy(desc(assessments.createdAt));
+    
+    console.log(`[getAssessmentsByUserOrPhone] 查询成功，返回 ${result.length} 条记录`);
+    return result;
+  } catch (error: any) {
+    console.error("[getAssessmentsByUserOrPhone] 查询失败:", error);
+    throw error;
+  }
 }

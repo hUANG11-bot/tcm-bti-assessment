@@ -38,7 +38,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     const updateSet: Record<string, unknown> = {};
 
     // 基础字段（必须存在）
-    const requiredFields = ["name", "email", "loginMethod"] as const;
+    const requiredFields = ["name", "email", "loginMethod", "avatar"] as const;
     // 可选字段（可能不存在于旧数据库中）
     const optionalFields = ["birthDate", "gender"] as const;
     
@@ -82,6 +82,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     console.log(`[upsertUser] 准备插入的值:`, {
       openId: values.openId,
       name: values.name,
+      avatar: values.avatar,
       email: values.email,
       loginMethod: values.loginMethod,
       birthDate: values.birthDate,

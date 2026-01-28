@@ -10,3 +10,8 @@ AFTER `loginMethod`;
 ALTER TABLE `users` 
 ADD COLUMN `gender` VARCHAR(10) NULL 
 AFTER `birthDate`;
+
+-- 添加 avatar 字段（如果不存在）- 用于存储微信头像URL
+ALTER TABLE `users` 
+ADD COLUMN `avatar` VARCHAR(512) NULL 
+AFTER `name`;

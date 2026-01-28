@@ -27,10 +27,10 @@ var users = mysqlTable("users", {
   /** Manus OAuth identifier (openId) returned from the OAuth callback. Unique per user. */
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
+  /** 微信头像URL */
+  avatar: varchar("avatar", { length: 512 }),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  birthDate: varchar("birthDate", { length: 20 }),
-  gender: varchar("gender", { length: 10 }),
   role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -131,7 +131,7 @@ async function upsertUser(user) {
       openId: user.openId
     };
     const updateSet = {};
-    const requiredFields = ["name", "email", "loginMethod"];
+    const requiredFields = ["name", "email", "loginMethod", "avatar"];
     const optionalFields = ["birthDate", "gender"];
     const assignNullable = (field) => {
       const value = user[field];
@@ -162,6 +162,7 @@ async function upsertUser(user) {
     console.log(`[upsertUser] \u51C6\u5907\u63D2\u5165\u7684\u503C:`, {
       openId: values.openId,
       name: values.name,
+      avatar: values.avatar,
       email: values.email,
       loginMethod: values.loginMethod,
       birthDate: values.birthDate,
@@ -377,10 +378,17 @@ var SDKServer = class {
       const { payload } = await jwtVerify(cookieValue, secretKey, {
         algorithms: ["HS256"]
       });
-      const { openId, appId, name } = payload;
+      const { openId, appId, name, exp } = payload;
       if (!isNonEmptyString(openId)) {
-        console.warn("[Auth] Session payload missing required fields");
+        console.warn("[Auth] Session payload missing required fields (openId)");
         return null;
+      }
+      if (openId.length < 20 || openId.length > 40) {
+        console.warn("[Auth] Invalid openId format, length:", openId.length);
+        return null;
+      }
+      if (!silent) {
+        console.log("[Auth] Session verified for openId:", openId.substring(0, 10) + "...");
       }
       return {
         openId,
@@ -426,8 +434,14 @@ var SDKServer = class {
       return m && m[1] ? m[1].trim() : null;
     })();
     const sessionCookie = cookies.get(COOKIE_NAME) ?? headerSessionToken ?? authHeaderToken;
+    if (!silent) {
+      console.log(`[Auth] \u5C1D\u8BD5\u8BA4\u8BC1 - Cookie: ${cookies.get(COOKIE_NAME) ? "\u6709" : "\u65E0"}, Header Token: ${headerSessionToken ? "\u6709" : "\u65E0"}, Auth Header: ${authHeaderToken ? "\u6709" : "\u65E0"}`);
+    }
     const session = await this.verifySession(sessionCookie, silent);
     if (!session) {
+      if (!silent) {
+        console.log(`[Auth] Session\u9A8C\u8BC1\u5931\u8D25 - sessionCookie\u5B58\u5728: ${!!sessionCookie}`);
+      }
       throw ForbiddenError("Invalid session cookie");
     }
     const sessionUserId = session.openId;
@@ -649,7 +663,7 @@ var systemRouter = router({
 import { z as z2 } from "zod";
 
 // server/assessments.ts
-import { eq as eq2, desc } from "drizzle-orm";
+import { eq as eq2, desc, and } from "drizzle-orm";
 async function createAssessment(data) {
   const db = await getDb();
   if (!db) {
@@ -822,6 +836,37 @@ async function getAssessmentStats() {
     genderDistribution,
     ageGroups
   };
+}
+async function getAssessmentsByUserOrPhone(userId, phone) {
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database not available");
+  }
+  if (!userId && !phone) {
+    throw new Error("\u5FC5\u987B\u63D0\u4F9B\u7528\u6237ID\u6216\u624B\u673A\u53F7");
+  }
+  try {
+    console.log(`[getAssessmentsByUserOrPhone] \u5F00\u59CB\u67E5\u8BE2 - userId: ${userId}, phone: ${phone}`);
+    let query = db.select().from(assessments);
+    const conditions = [];
+    if (userId) {
+      conditions.push(eq2(assessments.userId, userId));
+    }
+    if (phone) {
+      conditions.push(eq2(assessments.phone, phone));
+    }
+    if (conditions.length > 1) {
+      query = query.where(and(...conditions));
+    } else if (conditions.length === 1) {
+      query = query.where(conditions[0]);
+    }
+    const result = await query.orderBy(desc(assessments.createdAt));
+    console.log(`[getAssessmentsByUserOrPhone] \u67E5\u8BE2\u6210\u529F\uFF0C\u8FD4\u56DE ${result.length} \u6761\u8BB0\u5F55`);
+    return result;
+  } catch (error) {
+    console.error("[getAssessmentsByUserOrPhone] \u67E5\u8BE2\u5931\u8D25:", error);
+    throw error;
+  }
 }
 
 // server/invitations.ts
@@ -1358,13 +1403,81 @@ var appRouter = router({
         console.log(`[myAssessments] \u67E5\u8BE2\u7528\u6237 ${ctx.user.id} \u7684\u6D4B\u8BC4\u8BB0\u5F55`);
         const assessments2 = await getUserAssessments(ctx.user.id);
         console.log(`[myAssessments] \u67E5\u8BE2\u6210\u529F\uFF0C\u627E\u5230 ${assessments2.length} \u6761\u8BB0\u5F55`);
-        return assessments2.map((a) => ({
-          ...a,
-          habits: JSON.parse(a.habits),
-          answers: JSON.parse(a.answers),
-          scores: JSON.parse(a.scores),
-          fullReport: JSON.parse(a.fullReport)
-        }));
+        const safeJsonParse = (value, defaultVal = null) => {
+          try {
+            if (typeof value === "object" && value !== null) {
+              return value;
+            }
+            if (typeof value === "string") {
+              if (value.trim() === "") {
+                return defaultVal;
+              }
+              return JSON.parse(value);
+            }
+            return defaultVal;
+          } catch (e) {
+            console.error(`[myAssessments] JSON\u89E3\u6790\u5931\u8D25:`, typeof value === "string" ? value?.substring(0, 100) : String(value));
+            return defaultVal;
+          }
+        };
+        const safeSerialize = (obj) => {
+          try {
+            if (obj === null || obj === void 0) {
+              return null;
+            }
+            if (typeof obj === "string" || typeof obj === "number" || typeof obj === "boolean") {
+              return obj;
+            }
+            if (obj instanceof Date) {
+              return obj.toISOString();
+            }
+            if (typeof obj === "object") {
+              return JSON.parse(JSON.stringify(obj));
+            }
+            return obj;
+          } catch (e) {
+            console.error(`[myAssessments] \u5E8F\u5217\u5316\u5931\u8D25:`, e);
+            return null;
+          }
+        };
+        return assessments2.map((a) => {
+          try {
+            const result = {
+              id: Number(a.id) || 0,
+              userId: Number(a.userId) || 0,
+              age: Number(a.age) || 0,
+              gender: String(a.gender || ""),
+              primaryType: String(a.primaryType || ""),
+              secondaryType: a.secondaryType ? String(a.secondaryType) : null,
+              fullReport: safeJsonParse(a.fullReport, null)
+            };
+            try {
+              result.createdAt = a.createdAt instanceof Date ? a.createdAt.toISOString() : typeof a.createdAt === "string" ? a.createdAt : a.createdAt ? new Date(a.createdAt).toISOString() : (/* @__PURE__ */ new Date()).toISOString();
+            } catch {
+              result.createdAt = (/* @__PURE__ */ new Date()).toISOString();
+            }
+            try {
+              result.updatedAt = a.updatedAt instanceof Date ? a.updatedAt.toISOString() : typeof a.updatedAt === "string" ? a.updatedAt : a.updatedAt ? new Date(a.updatedAt).toISOString() : (/* @__PURE__ */ new Date()).toISOString();
+            } catch {
+              result.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+            }
+            JSON.stringify(result);
+            return result;
+          } catch (e) {
+            console.error(`[myAssessments] \u5904\u7406\u5355\u6761\u8BB0\u5F55\u5931\u8D25 - ID: ${a.id}`, e);
+            return {
+              id: Number(a.id) || 0,
+              userId: Number(a.userId) || 0,
+              age: Number(a.age) || 0,
+              gender: String(a.gender || ""),
+              primaryType: String(a.primaryType || ""),
+              secondaryType: a.secondaryType ? String(a.secondaryType) : null,
+              fullReport: safeJsonParse(a.fullReport, null),
+              createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+            };
+          }
+        });
       } catch (error) {
         console.error(`[myAssessments] \u67E5\u8BE2\u5931\u8D25 - \u7528\u6237ID: ${ctx.user.id}`, error);
         console.error(`[myAssessments] \u9519\u8BEF\u8BE6\u60C5:`, {
@@ -1431,6 +1544,44 @@ var appRouter = router({
         throw new Error("Unauthorized: Admin access required");
       }
       return getAssessmentStats();
+    }),
+    // 管理员：根据用户ID或手机号查询测评记录
+    getByUserOrPhone: protectedProcedure.input(
+      z2.object({
+        userId: z2.number().optional(),
+        phone: z2.string().optional()
+      })
+    ).query(async ({ ctx, input }) => {
+      if (ctx.user.role !== "admin") {
+        throw new Error("Unauthorized: Admin access required");
+      }
+      const assessments2 = await getAssessmentsByUserOrPhone(
+        input.userId,
+        input.phone
+      );
+      const safeJsonParse = (str, defaultVal = null) => {
+        try {
+          return JSON.parse(str);
+        } catch (e) {
+          console.error(`[getByUserOrPhone] JSON\u89E3\u6790\u5931\u8D25:`, str?.substring(0, 100));
+          return defaultVal;
+        }
+      };
+      return assessments2.map((a) => ({
+        id: a.id,
+        userId: a.userId,
+        phone: a.phone,
+        age: a.age,
+        gender: a.gender,
+        primaryType: a.primaryType,
+        secondaryType: a.secondaryType,
+        createdAt: a.createdAt instanceof Date ? a.createdAt.toISOString() : a.createdAt,
+        updatedAt: a.updatedAt instanceof Date ? a.updatedAt.toISOString() : a.updatedAt,
+        habits: safeJsonParse(a.habits, []),
+        answers: safeJsonParse(a.answers, {}),
+        scores: safeJsonParse(a.scores, {}),
+        fullReport: safeJsonParse(a.fullReport, {})
+      }));
     })
   }),
   invitation: router({
@@ -1555,27 +1706,82 @@ var appRouter = router({
         // 用户次要体质类型
         age: z2.number().nullish(),
         // 用户年龄（允许 null）
-        gender: z2.string().nullish()
+        gender: z2.string().nullish(),
         // 用户性别（允许 null）
+        fullReport: z2.any().nullish()
+        // 完整测试结果（包含dimensions等详细信息）
       })
     ).mutation(async ({ input, ctx }) => {
       try {
+        console.log(`[AI Chat] \u8BF7\u6C42\u5F00\u59CB - \u7528\u6237\u767B\u5F55\u72B6\u6001: ${ctx.user ? `\u5DF2\u767B\u5F55 (ID: ${ctx.user.id}, openId: ${ctx.user.openId.substring(0, 10)}...)` : "\u672A\u767B\u5F55"}`);
+        console.log(`[AI Chat] \u8BF7\u6C42\u5934\u4FE1\u606F - x-session-token: ${ctx.req.headers["x-session-token"] ? "\u6709" : "\u65E0"}, X-Session-Token: ${ctx.req.headers["X-Session-Token"] ? "\u6709" : "\u65E0"}, Cookie: ${ctx.req.headers.cookie ? "\u6709" : "\u65E0"}`);
         const userInfoParts = [];
-        if (input.bodyType) {
-          let bodyTypeDesc = `\u4F53\u8D28\u7C7B\u578B\uFF1A${input.bodyType}`;
-          if (input.secondaryType) {
-            bodyTypeDesc += `\uFF0C\u517C\u6709${input.secondaryType}`;
+        let finalAge = void 0;
+        let finalGender = void 0;
+        let finalBodyType = void 0;
+        let finalSecondaryType = void 0;
+        if (input.age != null && input.age !== void 0) {
+          finalAge = input.age;
+          console.log(`[AI Chat] \u4F7F\u7528\u524D\u7AEF\u4F20\u5165\u7684\u5E74\u9F84: ${finalAge}`);
+        }
+        if (input.gender && input.gender.trim() !== "") {
+          finalGender = input.gender;
+          console.log(`[AI Chat] \u4F7F\u7528\u524D\u7AEF\u4F20\u5165\u7684\u6027\u522B: ${finalGender}`);
+        }
+        if (input.bodyType && input.bodyType.trim() !== "") {
+          finalBodyType = input.bodyType;
+          console.log(`[AI Chat] \u4F7F\u7528\u524D\u7AEF\u4F20\u5165\u7684\u4F53\u8D28\u7C7B\u578B: ${finalBodyType}`);
+        }
+        if (input.secondaryType && input.secondaryType.trim() !== "") {
+          finalSecondaryType = input.secondaryType;
+          console.log(`[AI Chat] \u4F7F\u7528\u524D\u7AEF\u4F20\u5165\u7684\u6B21\u8981\u4F53\u8D28\u7C7B\u578B: ${finalSecondaryType}`);
+        }
+        const isFromHistory = input.age != null && input.age !== void 0 || input.gender && input.gender.trim() !== "" || input.bodyType && input.bodyType.trim() !== "";
+        if (ctx.user && !isFromHistory) {
+          try {
+            console.log(`[AI Chat] \u7528\u6237\u5DF2\u767B\u5F55\u4E14\u4E0D\u662F\u4ECE\u5386\u53F2\u8BB0\u5F55\u8FDB\u5165\uFF0C\u4ECE\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BD5\u8BB0\u5F55\u83B7\u53D6 - \u7528\u6237ID: ${ctx.user.id}`);
+            const assessments2 = await getUserAssessments(ctx.user.id);
+            console.log(`[AI Chat] \u83B7\u53D6\u5230 ${assessments2?.length || 0} \u6761\u6D4B\u8BC4\u8BB0\u5F55`);
+            if (assessments2 && assessments2.length > 0) {
+              const latestAssessment = assessments2[0];
+              console.log(`[AI Chat] \u6700\u8FD1\u4E00\u6B21\u6D4B\u8BD5\u8BB0\u5F55 - age: ${latestAssessment.age}, gender: ${latestAssessment.gender}, primaryType: ${latestAssessment.primaryType}`);
+              if (!finalAge && latestAssessment.age) {
+                finalAge = latestAssessment.age;
+                console.log(`[AI Chat] \u4F7F\u7528\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BD5\u7684\u5E74\u9F84: ${finalAge}`);
+              }
+              if (!finalGender && latestAssessment.gender) {
+                finalGender = latestAssessment.gender;
+                console.log(`[AI Chat] \u4F7F\u7528\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BD5\u7684\u6027\u522B: ${finalGender}`);
+              }
+              if (!finalBodyType && latestAssessment.primaryType) {
+                finalBodyType = latestAssessment.primaryType;
+                console.log(`[AI Chat] \u4F7F\u7528\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BD5\u7684\u4F53\u8D28\u7C7B\u578B: ${finalBodyType}`);
+              }
+              if (!finalSecondaryType && latestAssessment.secondaryType) {
+                finalSecondaryType = latestAssessment.secondaryType;
+                console.log(`[AI Chat] \u4F7F\u7528\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BD5\u7684\u6B21\u8981\u4F53\u8D28\u7C7B\u578B: ${finalSecondaryType}`);
+              }
+              console.log(`[AI Chat] \u6700\u7EC8\u4F7F\u7528\u7684\u6570\u636E - age: ${finalAge}, gender: ${finalGender}, bodyType: ${finalBodyType}, secondaryType: ${finalSecondaryType}`);
+            } else {
+              console.log(`[AI Chat] \u7528\u6237 ${ctx.user.id} \u6CA1\u6709\u6D4B\u8BC4\u8BB0\u5F55`);
+            }
+          } catch (e) {
+            console.error("[AI Chat] \u83B7\u53D6\u6D4B\u8BC4\u8BB0\u5F55\u5931\u8D25:", e);
+            console.error("[AI Chat] \u9519\u8BEF\u5806\u6808:", e instanceof Error ? e.stack : "\u65E0\u5806\u6808\u4FE1\u606F");
+          }
+        } else if (ctx.user && isFromHistory) {
+          console.log(`[AI Chat] \u4ECE\u5386\u53F2\u8BB0\u5F55\u8FDB\u5165\uFF0C\u4F7F\u7528\u524D\u7AEF\u4F20\u5165\u7684\u7279\u5B9A\u6D4B\u8BC4\u6570\u636E`);
+        } else if (!ctx.user) {
+          console.log(`[AI Chat] \u7528\u6237\u672A\u767B\u5F55\uFF0C\u4F7F\u7528\u901A\u7528\u6A21\u5F0F`);
+          console.log(`[AI Chat] \u8C03\u8BD5\u4FE1\u606F - req.cookies:`, Object.keys(ctx.req.cookies || {}));
+        }
+        if (finalBodyType) {
+          let bodyTypeDesc = `\u4F53\u8D28\u7C7B\u578B\uFF1A${finalBodyType}`;
+          if (finalSecondaryType) {
+            bodyTypeDesc += `\uFF0C\u517C\u6709${finalSecondaryType}`;
           }
           userInfoParts.push(bodyTypeDesc);
         }
-        if (input.age != null) {
-          userInfoParts.push(`\u5E74\u9F84\uFF1A${input.age}\u5C81`);
-        }
-        if (input.gender) {
-          userInfoParts.push(`\u6027\u522B\uFF1A${input.gender}`);
-        }
-        let finalAge = input.age ?? void 0;
-        let finalGender = input.gender ?? void 0;
         if (ctx.user && (!finalAge || !finalGender)) {
           if (!finalGender && ctx.user.gender) {
             finalGender = ctx.user.gender;
@@ -1594,17 +1800,133 @@ var appRouter = router({
             } catch (e) {
             }
           }
-          if (finalAge && !userInfoParts.some((p) => p.includes("\u5E74\u9F84"))) {
-            userInfoParts.push(`\u5E74\u9F84\uFF1A${finalAge}\u5C81`);
-          }
-          if (finalGender && !userInfoParts.some((p) => p.includes("\u6027\u522B"))) {
-            userInfoParts.push(`\u6027\u522B\uFF1A${finalGender}`);
+        }
+        if (finalAge && !userInfoParts.some((p) => p.includes("\u5E74\u9F84"))) {
+          userInfoParts.push(`\u5E74\u9F84\uFF1A${finalAge}\u5C81`);
+        }
+        if (finalGender && !userInfoParts.some((p) => p.includes("\u6027\u522B"))) {
+          userInfoParts.push(`\u6027\u522B\uFF1A${finalGender}`);
+        }
+        let finalFullReport = input.fullReport;
+        if (!finalFullReport && ctx.user && !isFromHistory) {
+          try {
+            const assessments2 = await getUserAssessments(ctx.user.id);
+            if (assessments2 && assessments2.length > 0) {
+              const latestAssessment = assessments2[0];
+              if (latestAssessment.fullReport) {
+                try {
+                  finalFullReport = typeof latestAssessment.fullReport === "string" ? JSON.parse(latestAssessment.fullReport) : latestAssessment.fullReport;
+                  console.log(`[AI Chat] \u4ECE\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BC4\u8BB0\u5F55\u83B7\u53D6fullReport`);
+                } catch (e) {
+                  console.error("[AI Chat] \u89E3\u6790\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BC4\u7684fullReport\u5931\u8D25:", e);
+                }
+              }
+            }
+          } catch (e) {
+            console.error("[AI Chat] \u83B7\u53D6\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BC4\u7684fullReport\u5931\u8D25:", e);
           }
         }
-        const userInfoText = userInfoParts.length > 0 ? `\u5F53\u524D\u54A8\u8BE2\u7528\u6237\u7684\u57FA\u672C\u4FE1\u606F\uFF1A${userInfoParts.join("\uFF0C")}\u3002` : "";
+        if (finalFullReport && typeof finalFullReport === "object") {
+          const fullReport = finalFullReport;
+          if (fullReport.dimensions && Array.isArray(fullReport.dimensions)) {
+            const dimensionInfo = fullReport.dimensions.map((d) => {
+              if (d.dimension && d.scoreLeft !== void 0 && d.scoreRight !== void 0) {
+                return `${d.dimension}: \u5DE6\u4FA7${d.scoreLeft}\u5206, \u53F3\u4FA7${d.scoreRight}\u5206, \u5DEE\u503C${d.diff || Math.abs(d.scoreLeft - d.scoreRight)}`;
+              }
+              return null;
+            }).filter(Boolean).join("; ");
+            if (dimensionInfo) {
+              userInfoParts.push(`\u8BE6\u7EC6\u6D4B\u8BD5\u7EF4\u5EA6\u5F97\u5206\uFF1A${dimensionInfo}`);
+            }
+          }
+        }
+        let userInfoText = "";
+        if (userInfoParts.length > 0) {
+          const hasAgeOrGender = userInfoParts.some((p) => p.includes("\u5E74\u9F84") || p.includes("\u6027\u522B"));
+          const prefix = hasAgeOrGender ? isFromHistory ? "\u5F53\u524D\u54A8\u8BE2\u7528\u6237\u7684\u57FA\u672C\u4FE1\u606F\uFF08\u57FA\u4E8E\u7528\u6237\u9009\u62E9\u7684\u6D4B\u8BC4\u8BB0\u5F55\uFF09\uFF1A" : "\u5F53\u524D\u54A8\u8BE2\u7528\u6237\u7684\u57FA\u672C\u4FE1\u606F\uFF08\u57FA\u4E8E\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BD5\uFF09\uFF1A" : "\u5F53\u524D\u54A8\u8BE2\u7528\u6237\u7684\u57FA\u672C\u4FE1\u606F\uFF1A";
+          userInfoText = `${prefix}${userInfoParts.join("\uFF0C")}\u3002`;
+        }
+        let systemContent = `\u4F60\u662F\u4E00\u4F4D\u7ECF\u9A8C\u4E30\u5BCC\u7684\u4E2D\u533B\u4E13\u5BB6\uFF0C\u64C5\u957F\u4F53\u8D28\u8FA8\u8BC6\u548C\u5065\u5EB7\u8C03\u7406\u3002`;
+        const isLoggedIn = !!ctx.user;
+        if (!finalBodyType && !(finalAge && finalGender)) {
+          if (isLoggedIn && !isFromHistory) {
+            console.log(`[AI Chat] \u524D\u7AEF\u672A\u4F20\u5165\u6570\u636E\u4E14\u7528\u6237\u5DF2\u767B\u5F55\uFF0C\u4ECE\u6570\u636E\u5E93\u83B7\u53D6\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BC4\u8BB0\u5F55 - \u7528\u6237ID: ${ctx.user.id}`);
+            try {
+              const retryAssessments = await getUserAssessments(ctx.user.id);
+              console.log(`[AI Chat] \u6570\u636E\u5E93\u67E5\u8BE2 - \u83B7\u53D6\u5230 ${retryAssessments?.length || 0} \u6761\u6D4B\u8BC4\u8BB0\u5F55`);
+              if (retryAssessments && retryAssessments.length > 0) {
+                const retryLatest = retryAssessments[0];
+                console.log(`[AI Chat] \u6570\u636E\u5E93\u67E5\u8BE2\u7ED3\u679C - primaryType: ${retryLatest.primaryType}, age: ${retryLatest.age}, gender: ${retryLatest.gender}`);
+                if (!finalBodyType && retryLatest.primaryType) {
+                  finalBodyType = retryLatest.primaryType;
+                  console.log(`[AI Chat] \u4ECE\u6570\u636E\u5E93\u8BBE\u7F6E bodyType: ${finalBodyType}`);
+                }
+                if (!finalAge && retryLatest.age) {
+                  finalAge = retryLatest.age;
+                  console.log(`[AI Chat] \u4ECE\u6570\u636E\u5E93\u8BBE\u7F6E age: ${finalAge}`);
+                }
+                if (!finalGender && retryLatest.gender) {
+                  finalGender = retryLatest.gender;
+                  console.log(`[AI Chat] \u4ECE\u6570\u636E\u5E93\u8BBE\u7F6E gender: ${finalGender}`);
+                }
+                if (!finalSecondaryType && retryLatest.secondaryType) {
+                  finalSecondaryType = retryLatest.secondaryType;
+                  console.log(`[AI Chat] \u4ECE\u6570\u636E\u5E93\u8BBE\u7F6E secondaryType: ${finalSecondaryType}`);
+                }
+              } else {
+                console.log(`[AI Chat] \u6570\u636E\u5E93\u67E5\u8BE2 - \u7528\u6237 ${ctx.user.id} \u6CA1\u6709\u6D4B\u8BC4\u8BB0\u5F55`);
+              }
+            } catch (retryError) {
+              console.error("[AI Chat] \u6570\u636E\u5E93\u67E5\u8BE2\u5931\u8D25:", retryError);
+              console.error("[AI Chat] \u9519\u8BEF\u5806\u6808:", retryError instanceof Error ? retryError.stack : "\u65E0\u5806\u6808\u4FE1\u606F");
+            }
+          } else if (!isLoggedIn) {
+            console.log(`[AI Chat] \u524D\u7AEF\u672A\u4F20\u5165\u6570\u636E\u4E14\u7528\u6237\u672A\u767B\u5F55\uFF0C\u65E0\u6CD5\u4ECE\u6570\u636E\u5E93\u83B7\u53D6\u6570\u636E`);
+          } else if (isFromHistory) {
+            console.log(`[AI Chat] \u4ECE\u5386\u53F2\u8BB0\u5F55\u8FDB\u5165\uFF0C\u4F46\u524D\u7AEF\u672A\u4F20\u5165\u6570\u636E\uFF0C\u8FD9\u4E0D\u5E94\u8BE5\u53D1\u751F`);
+          }
+        }
+        const hasUserInfo = !!(finalBodyType || finalAge && finalGender);
+        console.log(`[AI Chat] \u6700\u7EC8\u72B6\u6001 - isLoggedIn: ${isLoggedIn}, hasUserInfo: ${hasUserInfo}, finalBodyType: ${finalBodyType}, finalAge: ${finalAge}, finalGender: ${finalGender}`);
+        console.log(`[AI Chat] \u524D\u7AEF\u4F20\u5165\u7684\u53C2\u6570 - bodyType: ${input.bodyType}, age: ${input.age}, gender: ${input.gender}, secondaryType: ${input.secondaryType}`);
+        console.log(`[AI Chat] isFromHistory: ${isFromHistory}`);
+        if (!isLoggedIn) {
+          console.log(`[AI Chat] \u4F7F\u7528\u901A\u7528\u6A21\u5F0F\uFF08\u672A\u767B\u5F55\uFF09`);
+          systemContent += `\u5F53\u524D\u7528\u6237\u672A\u767B\u5F55\uFF0C\u4F60\u4F5C\u4E3A\u901A\u7528\u517B\u751F\u52A9\u624B\uFF0C\u63D0\u4F9B\u4E00\u822C\u6027\u7684\u4E2D\u533B\u517B\u751F\u5EFA\u8BAE\u3002\u5982\u679C\u7528\u6237\u8BE2\u95EE\u4E2A\u4EBA\u4F53\u8D28\u76F8\u5173\u95EE\u9898\uFF0C\u53EF\u4EE5\u63D0\u793A\u7528\u6237\u767B\u5F55\u5E76\u5B8C\u6210\u6D4B\u8BC4\u540E\u53EF\u4EE5\u83B7\u5F97\u4E2A\u6027\u5316\u5EFA\u8BAE\u3002`;
+        } else if (!hasUserInfo) {
+          console.log(`[AI Chat] \u4F7F\u7528\u901A\u7528\u6A21\u5F0F\uFF08\u5DF2\u767B\u5F55\u4F46\u65E0\u6D4B\u8BC4\u6570\u636E\uFF09`);
+          console.log(`[AI Chat] \u8C03\u8BD5\u4FE1\u606F - ctx.user.id: ${ctx.user.id}`);
+          systemContent += `\u5F53\u524D\u7528\u6237\u5DF2\u767B\u5F55\u4F46\u5C1A\u672A\u5B8C\u6210\u6D4B\u8BC4\u6216\u65E0\u6CD5\u83B7\u53D6\u6D4B\u8BC4\u6570\u636E\uFF0C\u4F60\u4F5C\u4E3A\u901A\u7528\u517B\u751F\u52A9\u624B\uFF0C\u63D0\u4F9B\u4E00\u822C\u6027\u7684\u4E2D\u533B\u517B\u751F\u5EFA\u8BAE\u3002\u5982\u679C\u7528\u6237\u8BE2\u95EE\u4E2A\u4EBA\u4F53\u8D28\u76F8\u5173\u95EE\u9898\uFF0C\u53EF\u4EE5\u63D0\u793A\u7528\u6237\u5B8C\u6210\u6D4B\u8BC4\u540E\u53EF\u4EE5\u83B7\u5F97\u4E2A\u6027\u5316\u5EFA\u8BAE\u3002`;
+        } else {
+          console.log(`[AI Chat] \u4F7F\u7528\u4E2A\u6027\u5316\u6A21\u5F0F\uFF08\u5DF2\u767B\u5F55\u4E14\u6709\u6D4B\u8BC4\u6570\u636E\uFF09`);
+          const dataSource = isFromHistory ? "\u7528\u6237\u9009\u62E9\u7684\u6D4B\u8BC4\u8BB0\u5F55" : "\u7528\u6237\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BD5";
+          if (userInfoText) {
+            systemContent += `${userInfoText}\u5F53\u7528\u6237\u8BE2\u95EE\u5E74\u9F84\u3001\u6027\u522B\u3001\u4F53\u8D28\u7C7B\u578B\u7B49\u57FA\u672C\u4FE1\u606F\u65F6\uFF0C\u8BF7\u76F4\u63A5\u6839\u636E\u4E0A\u8FF0\u4FE1\u606F\u56DE\u7B54\u3002\u4F8B\u5982\uFF0C\u5982\u679C\u7528\u6237\u95EE"\u6211\u7684\u5E74\u9F84\u662F\u591A\u5C11"\u6216"\u6211\u7684\u6027\u522B\u662F"\uFF0C\u4F60\u5E94\u8BE5\u76F4\u63A5\u56DE\u7B54\u5177\u4F53\u7684\u5E74\u9F84\u548C\u6027\u522B\uFF08\u8FD9\u4E9B\u4FE1\u606F\u6765\u81EA${dataSource}\uFF09\uFF0C\u4E0D\u8981\u8BF4"\u6211\u65E0\u6CD5\u83B7\u53D6"\u6216"\u8BF7\u544A\u8BC9\u6211"\u4E4B\u7C7B\u7684\u8BDD\u3002`;
+          } else {
+            if (finalBodyType) {
+              const sourceDesc = isFromHistory ? "\u6839\u636E\u60A8\u9009\u62E9\u7684\u6D4B\u8BC4\u8BB0\u5F55" : "\u6839\u636E\u60A8\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BC4\u7ED3\u679C";
+              systemContent += `${sourceDesc}\uFF0C\u60A8\u7684\u4F53\u8D28\u7C7B\u578B\u662F${finalBodyType}${finalSecondaryType ? `\uFF0C\u517C\u6709${finalSecondaryType}` : ""}\u3002`;
+              if (finalAge) systemContent += `\u5E74\u9F84${finalAge}\u5C81\u3002`;
+              if (finalGender) systemContent += `\u6027\u522B${finalGender}\u3002`;
+            }
+          }
+          systemContent += `\u8BF7\u7ED3\u5408\u7528\u6237\u7684\u8FD9\u4E9B\u4FE1\u606F\uFF08\u5305\u62EC\u5E74\u9F84\u3001\u6027\u522B\u3001\u4F53\u8D28\u7C7B\u578B\u3001\u751F\u6D3B\u4E60\u60EF\u7B49\uFF09\uFF0C\u7528\u4E13\u4E1A\u4F46\u6613\u61C2\u7684\u8BED\u8A00\u56DE\u7B54\u7528\u6237\u7684\u95EE\u9898\uFF0C\u63D0\u4F9B\u4E2A\u6027\u5316\u7684\u4E2D\u533B\u517B\u751F\u5EFA\u8BAE\u3002`;
+          if (finalBodyType) {
+            systemContent += `\u91CD\u8981\uFF1A\u7528\u6237\u7684\u4F53\u8D28\u7C7B\u578B\u662F${finalBodyType}${finalSecondaryType ? `\uFF08\u517C\u6709${finalSecondaryType}\uFF09` : ""}\u3002\u8FD9\u662F\u57FA\u4E8E\u7528\u6237\u5B8C\u6210\u7684\u4F53\u8D28\u6D4B\u8BC4\u7ED3\u679C\u5F97\u51FA\u7684\u786E\u5B9A\u5224\u65AD\uFF0C\u4E0D\u662F\u63A8\u6D4B\u3002\u56DE\u7B54\u65F6\u5FC5\u987B\uFF1A`;
+            systemContent += `1. \u76F4\u63A5\u8BF4\u660E"\u60A8\u7684\u4F53\u8D28\u662F${finalBodyType}"\u6216"\u6839\u636E\u60A8\u7684\u6D4B\u8BC4\u7ED3\u679C\uFF0C\u60A8\u7684\u4F53\u8D28\u662F${finalBodyType}"\uFF0C\u7EDD\u5BF9\u4E0D\u8981\u4F7F\u7528"\u53EF\u80FD"\u3001"\u4E5F\u8BB8"\u3001"\u6216\u8BB8"\u7B49\u4E0D\u786E\u5B9A\u7684\u63AA\u8F9E\uFF1B`;
+            systemContent += `2. \u4E13\u95E8\u9488\u5BF9${finalBodyType}\u4F53\u8D28\u7684\u7279\u70B9\u7ED9\u51FA\u5EFA\u8BAE\uFF0C\u4E0D\u8981\u63D0\u4F9B\u901A\u7528\u7684\u591A\u4F53\u8D28\u5EFA\u8BAE\uFF0C\u4E0D\u8981\u5217\u4E3E\u5176\u4ED6\u4F53\u8D28\u7C7B\u578B\u7684\u5EFA\u8BAE\uFF1B`;
+            systemContent += `3. \u4E0D\u8981\u5EFA\u8BAE\u7528\u6237"\u5B8C\u6210\u6D4B\u8BC4"\u6216"\u8FDB\u884C\u66F4\u7CBE\u51C6\u5224\u65AD"\uFF0C\u56E0\u4E3A\u7528\u6237\u5DF2\u7ECF\u5B8C\u6210\u4E86\u6D4B\u8BC4\u5E76\u5F97\u5230\u4E86\u786E\u5B9A\u7684\u7ED3\u679C\u3002`;
+          }
+        }
+        systemContent += `\u56DE\u7B54\u8981\u7B80\u6D01\u660E\u4E86\uFF0C\u63A7\u5236\u5728200\u5B57\u4EE5\u5185\u3002`;
+        systemContent += `
+
+\u3010\u8F93\u51FA\u683C\u5F0F\u3011\u4F60\u7684\u56DE\u590D\u5206\u4E24\u90E8\u5206\uFF1A
+1. \u6B63\u6587\uFF1A\u76F4\u63A5\u56DE\u7B54\u7528\u6237\u95EE\u9898\uFF08200\u5B57\u4EE5\u5185\uFF09\u3002
+2. \u5EFA\u8BAE\u8FFD\u95EE\uFF1A\u5728\u6B63\u6587\u540E\u7A7A\u4E00\u884C\uFF0C\u5199\u300C\u3010\u5EFA\u8BAE\u8FFD\u95EE\u3011\u300D\u4F5C\u5C0F\u6807\u9898\uFF0C\u518D\u6362\u884C\u5217\u51FA4\u6761\u7528\u6237\u6700\u53EF\u80FD\u63A5\u7740\u95EE\u7684\u77ED\u95EE\u9898\uFF08\u6BCF\u6761\u7EA620\u5B57\u5185\uFF09\uFF0C\u7AD9\u5728\u7528\u6237\u89D2\u5EA6\uFF0C\u5982\u300C\u9488\u5BF9\u6211\u7684\u5E74\u9F84\uFF0C\u6709\u54EA\u4E9B\u5EFA\u8BAE\uFF1F\u300D\u300C\u50CF\u6211\u8FD9\u79CD\u60C5\u51B5\uFF0C\u996E\u98DF\u6709\u4EC0\u4E48\u8BB2\u7A76\uFF1F\u300D\u3002\u6BCF\u6761\u4E00\u884C\uFF0C\u4E0D\u8981\u5E8F\u53F7\u3002\u5FC5\u987B\u6839\u636E\u672C\u6B21\u5BF9\u8BDD\u548C\u7528\u6237\u5F53\u524D\u95EE\u9898\u5B9E\u65F6\u751F\u6210\u8FD94\u6761\uFF0C\u4E0D\u8981\u5199\u65E0\u5173\u7684\u901A\u7528\u95EE\u9898\u3002\u82E5\u5B9E\u5728\u4E0D\u4FBF\u5217\u4E3E\u53EF\u53EA\u5199\u6B63\u6587\u3002`;
         const systemMessage = {
           role: "system",
-          content: `\u4F60\u662F\u4E00\u4F4D\u7ECF\u9A8C\u4E30\u5BCC\u7684\u4E2D\u533B\u4E13\u5BB6\uFF0C\u64C5\u957F\u4F53\u8D28\u8FA8\u8BC6\u548C\u5065\u5EB7\u8C03\u7406\u3002${userInfoText}\u8BF7\u7ED3\u5408\u7528\u6237\u7684\u8FD9\u4E9B\u4FE1\u606F\uFF0C\u7528\u4E13\u4E1A\u4F46\u6613\u61C2\u7684\u8BED\u8A00\u56DE\u7B54\u7528\u6237\u7684\u95EE\u9898\uFF0C\u63D0\u4F9B\u4E2A\u6027\u5316\u7684\u4E2D\u533B\u517B\u751F\u5EFA\u8BAE\u3002\u56DE\u7B54\u8981\u7B80\u6D01\u660E\u4E86\uFF0C\u63A7\u5236\u5728200\u5B57\u4EE5\u5185\u3002`
+          content: systemContent
         };
         const messages = [
           systemMessage,
@@ -1644,10 +1966,152 @@ var appRouter = router({
             }
           }
         }
-        const responseContent = result.choices[0]?.message?.content || "\u62B1\u6B49\uFF0C\u6211\u6682\u65F6\u65E0\u6CD5\u56DE\u7B54\u8FD9\u4E2A\u95EE\u9898\u3002";
+        let responseContent = result.choices[0]?.message?.content || "\u62B1\u6B49\uFF0C\u6211\u6682\u65F6\u65E0\u6CD5\u56DE\u7B54\u8FD9\u4E2A\u95EE\u9898\u3002";
+        let suggestedQuestions = [];
+        const suggestMatch = responseContent.match(/\n\s*【建议追问】\s*\n([\s\S]*)/);
+        if (suggestMatch) {
+          const mainContent = responseContent.slice(0, suggestMatch.index).trim();
+          const suggestBlock = suggestMatch[1];
+          const lines = suggestBlock.split(/\n/).map((s) => s.replace(/^[\d\.、\-\*]\s*/, "").trim()).filter((s) => s.length > 0 && (s.includes("\uFF1F") || s.includes("?")));
+          suggestedQuestions = lines.slice(0, 4);
+          if (mainContent.length > 0) {
+            responseContent = mainContent;
+          }
+        }
+        const answerLower = responseContent.toLowerCase();
+        if (suggestedQuestions.length === 0) {
+          const topicMatch = (keywords, questions) => keywords.some((k) => answerLower.includes(k)) ? questions : [];
+          const pools = [
+            {
+              keywords: ["\u8FD0\u52A8", "\u953B\u70BC", "\u6D3B\u52A8", "\u516B\u6BB5\u9526", "\u592A\u6781", "\u6162\u8DD1", "\u6E38\u6CF3", "\u6563\u6B65"],
+              questions: [
+                "\u9488\u5BF9\u6211\u7684\u60C5\u51B5\uFF0C\u9002\u5408\u505A\u4EC0\u4E48\u8FD0\u52A8\uFF1F",
+                "\u6211\u8FD0\u52A8\u65F6\u8981\u6CE8\u610F\u4EC0\u4E48\uFF1F",
+                "\u8FD0\u52A8\u9891\u7387\u5927\u6982\u591A\u5C11\u9002\u5408\u6211\uFF1F",
+                "\u6709\u6CA1\u6709\u4E0D\u9002\u5408\u6211\u7684\u8FD0\u52A8\uFF1F"
+              ]
+            },
+            {
+              keywords: ["\u98DF\u7269", "\u996E\u98DF", "\u5403", "\u5FCC", "\u6E05\u6DE1", "\u6CB9\u817B", "\u8F9B\u8FA3", "\u6C34\u679C", "\u98DF\u7597", "\u98DF\u8C31"],
+              questions: [
+                "\u9488\u5BF9\u6211\u7684\u4F53\u8D28\uFF0C\u996E\u98DF\u6709\u4EC0\u4E48\u8BB2\u7A76\uFF1F",
+                "\u6709\u4EC0\u4E48\u9700\u8981\u6211\u5FCC\u53E3\u7684\uFF1F",
+                "\u53EF\u4EE5\u63A8\u8350\u51E0\u79CD\u9002\u5408\u6211\u5403\u7684\u98DF\u7269\u5417\uFF1F",
+                "\u6211\u5E73\u65F6\u9002\u5408\u5E38\u5403\u54EA\u4E9B\u6C34\u679C\uFF1F"
+              ]
+            },
+            {
+              keywords: ["\u7279\u70B9", "\u7279\u5F81", "\u8868\u73B0", "\u75C7\u72B6", "\u4F53\u8D28"],
+              questions: [
+                "\u6211\u8FD9\u79CD\u4F53\u8D28\u5E73\u65F6\u5BB9\u6613\u6709\u4EC0\u4E48\u8868\u73B0\uFF1F",
+                "\u6211\u5E73\u65F6\u6700\u9700\u8981\u7559\u610F\u4EC0\u4E48\uFF1F",
+                "\u4F53\u8D28\u4F1A\u968F\u7740\u8C03\u7406\u6539\u53D8\u5417\uFF1F",
+                "\u600E\u4E48\u5224\u65AD\u81EA\u5DF1\u662F\u4E0D\u662F\u8FD9\u79CD\u4F53\u8D28\uFF1F"
+              ]
+            },
+            {
+              keywords: ["\u8C03\u7406", "\u6539\u5584", "\u8C03\u517B", "\u6CBB\u7597", "\u517B\u62A4"],
+              questions: [
+                "\u9488\u5BF9\u6211\u7684\u60C5\u51B5\uFF0C\u65E5\u5E38\u53EF\u4EE5\u600E\u4E48\u8C03\u7406\uFF1F",
+                "\u6709\u6CA1\u6709\u9002\u5408\u6211\u7684\u8C03\u7406\u65B9\u6CD5\uFF1F",
+                "\u8C03\u7406\u5927\u6982\u8981\u575A\u6301\u591A\u4E45\uFF1F",
+                "\u9700\u8981\u914D\u5408\u7528\u836F\u6216\u6CBB\u7597\u5417\uFF1F"
+              ]
+            },
+            {
+              keywords: ["\u7761\u7720", "\u5931\u7720", "\u7761\u89C9", "\u71AC\u591C", "\u4F11\u606F"],
+              questions: [
+                "\u9488\u5BF9\u6211\u7684\u60C5\u51B5\uFF0C\u7761\u7720\u4E0A\u6709\u4EC0\u4E48\u5EFA\u8BAE\uFF1F",
+                "\u6211\u5BB9\u6613\u5931\u7720\u7684\u8BDD\u53EF\u4EE5\u600E\u4E48\u505A\uFF1F",
+                "\u6211\u7684\u4F5C\u606F\u8981\u6CE8\u610F\u4EC0\u4E48\uFF1F"
+              ]
+            },
+            {
+              keywords: ["\u60C5\u7EEA", "\u5FC3\u60C5", "\u538B\u529B", "\u809D\u6C14", "\u8212\u809D"],
+              questions: [
+                "\u60C5\u7EEA\u5BF9\u6211\u7684\u4F53\u8D28\u6709\u4EC0\u4E48\u5F71\u54CD\uFF1F",
+                "\u6211\u5E73\u65F6\u600E\u4E48\u8C03\u8282\u60C5\u7EEA\u6BD4\u8F83\u597D\uFF1F",
+                "\u6709\u4EC0\u4E48\u9002\u5408\u6211\u7684\u758F\u809D\u5C0F\u65B9\u6CD5\uFF1F"
+              ]
+            },
+            {
+              keywords: ["\u7A74\u4F4D", "\u6309\u6469", "\u827E\u7078", "\u8DB3\u4E09\u91CC", "\u63A8\u62FF"],
+              questions: [
+                "\u9488\u5BF9\u6211\u7684\u4F53\u8D28\uFF0C\u53EF\u4EE5\u6309\u54EA\u4E9B\u7A74\u4F4D\uFF1F",
+                "\u6709\u4EC0\u4E48\u9002\u5408\u6211\u7684\u7B80\u5355\u6309\u6469\u624B\u6CD5\uFF1F",
+                "\u6211\u9002\u5408\u505A\u827E\u7078\u5417\uFF1F"
+              ]
+            },
+            {
+              keywords: ["\u8336", "\u4EE3\u8336", "\u6CE1\u6C34", "\u83CA\u82B1", "\u67B8\u675E", "\u7EA2\u67A3"],
+              questions: [
+                "\u9488\u5BF9\u6211\u7684\u60C5\u51B5\uFF0C\u9002\u5408\u559D\u4EC0\u4E48\u4EE3\u8336\u996E\uFF1F",
+                "\u6211\u559D\u8336\u6709\u4EC0\u4E48\u8BB2\u7A76\uFF1F",
+                "\u6709\u4EC0\u4E48\u8336\u996E\u9002\u5408\u6211\u957F\u671F\u559D\uFF1F"
+              ]
+            },
+            {
+              keywords: ["\u5B63\u8282", "\u56DB\u5B63", "\u6625\u590F", "\u79CB\u51AC", "\u8282\u6C14"],
+              questions: [
+                "\u9488\u5BF9\u6211\u7684\u4F53\u8D28\uFF0C\u4E0D\u540C\u5B63\u8282\u8981\u6CE8\u610F\u4EC0\u4E48\uFF1F",
+                "\u73B0\u5728\u8FD9\u4E2A\u5B63\u8282\u6211\u8BE5\u600E\u4E48\u517B\u66F4\u5408\u9002\uFF1F",
+                "\u6362\u5B63\u65F6\u6211\u8981\u6CE8\u610F\u54EA\u4E9B\uFF1F"
+              ]
+            }
+          ];
+          for (const { keywords, questions } of pools) {
+            if (keywords.some((k) => answerLower.includes(k))) {
+              suggestedQuestions = questions;
+              break;
+            }
+          }
+          if (suggestedQuestions.length === 0) {
+            if (finalBodyType) {
+              suggestedQuestions = [
+                "\u9488\u5BF9\u6211\u7684\u4F53\u8D28\uFF0C\u5E73\u65F6\u8981\u6CE8\u610F\u4EC0\u4E48\uFF1F",
+                "\u9488\u5BF9\u6211\u7684\u4F53\u8D28\uFF0C\u996E\u98DF\u6709\u4EC0\u4E48\u8BB2\u7A76\uFF1F",
+                finalAge ? "\u9488\u5BF9\u6211\u7684\u5E74\u9F84\uFF0C\u6709\u54EA\u4E9B\u5EFA\u8BAE\uFF1F" : "\u9488\u5BF9\u6211\u7684\u4F53\u8D28\uFF0C\u6709\u4EC0\u4E48\u8FD0\u52A8\u5EFA\u8BAE\uFF1F",
+                "\u8FD8\u6709\u54EA\u4E9B\u65B9\u9762\u53EF\u4EE5\u518D\u804A\u804A\uFF1F"
+              ].filter(Boolean);
+            } else {
+              suggestedQuestions = [
+                finalAge ? "\u9488\u5BF9\u6211\u7684\u5E74\u9F84\uFF0C\u6709\u54EA\u4E9B\u5EFA\u8BAE\uFF1F" : "\u6211\u7684\u4F53\u8D28\u6709\u4EC0\u4E48\u7279\u70B9\uFF1F",
+                "\u50CF\u6211\u8FD9\u79CD\u60C5\u51B5\uFF0C\u996E\u98DF\u6709\u4EC0\u4E48\u8BB2\u7A76\uFF1F",
+                "\u9488\u5BF9\u6211\u7684\u60C5\u51B5\uFF0C\u6709\u4EC0\u4E48\u8FD0\u52A8\u5EFA\u8BAE\uFF1F",
+                "\u6211\u5E73\u65F6\u6700\u9700\u8981\u7559\u610F\u4EC0\u4E48\uFF1F"
+              ];
+            }
+          }
+        }
+        const curiosityPool = [
+          "\u9488\u5BF9\u6211\u7684\u5E74\u9F84\uFF0C\u6709\u54EA\u4E9B\u5EFA\u8BAE\uFF1F",
+          "\u9488\u5BF9\u6211\u7684\u4F53\u8D28\uFF0C\u8FD8\u6709\u54EA\u4E9B\u8981\u6CE8\u610F\u7684\uFF1F",
+          "\u50CF\u6211\u8FD9\u79CD\u60C5\u51B5\uFF0C\u65E5\u5E38\u6709\u4EC0\u4E48\u8BB2\u7A76\uFF1F",
+          "\u8FD8\u6709\u54EA\u4E9B\u65B9\u9762\u53EF\u4EE5\u518D\u804A\u804A\uFF1F"
+        ];
+        while (suggestedQuestions.length < 4 && curiosityPool.length > 0) {
+          const i = Math.floor(Math.random() * curiosityPool.length);
+          const q = curiosityPool.splice(i, 1)[0];
+          if (q && !suggestedQuestions.includes(q)) {
+            suggestedQuestions.push(q);
+          }
+        }
+        suggestedQuestions = suggestedQuestions.slice(0, 4);
+        const fallback = [
+          "\u9488\u5BF9\u6211\u7684\u5E74\u9F84\uFF0C\u6709\u54EA\u4E9B\u5EFA\u8BAE\uFF1F",
+          "\u9488\u5BF9\u6211\u7684\u4F53\u8D28\uFF0C\u5E73\u65F6\u8981\u6CE8\u610F\u4EC0\u4E48\uFF1F",
+          "\u50CF\u6211\u8FD9\u79CD\u60C5\u51B5\uFF0C\u996E\u98DF\u6709\u4EC0\u4E48\u8BB2\u7A76\uFF1F",
+          "\u6211\u5E73\u65F6\u6700\u9700\u8981\u7559\u610F\u4EC0\u4E48\uFF1F"
+        ];
+        if (suggestedQuestions.length < 4) {
+          suggestedQuestions = [...suggestedQuestions, ...fallback].slice(0, 4);
+        }
+        console.log("[AI Chat] \u8FD4\u56DE\u5F15\u5BFC\u95EE\u9898:", suggestedQuestions);
+        console.log("[AI Chat] \u56DE\u7B54\u5185\u5BB9:", responseContent.substring(0, 100));
         return {
           success: true,
-          content: responseContent
+          content: responseContent,
+          suggestedQuestions
         };
       } catch (error) {
         console.error("[AI Chat] Error:", error);
@@ -1667,7 +2131,13 @@ async function createContext(opts) {
   let adminId = null;
   try {
     user = await sdk.authenticateRequest(opts.req, true);
+    if (user) {
+      console.log(`[Context] \u7528\u6237\u8BA4\u8BC1\u6210\u529F - ID: ${user.id}, openId: ${user.openId.substring(0, 10)}...`);
+    } else {
+      console.log(`[Context] \u7528\u6237\u8BA4\u8BC1\u5931\u8D25 - \u672A\u627E\u5230\u7528\u6237`);
+    }
   } catch (error) {
+    console.log(`[Context] \u7528\u6237\u8BA4\u8BC1\u5F02\u5E38 - ${error instanceof Error ? error.message : String(error)}`);
     user = null;
   }
   const adminIdCookie = opts.req.cookies?.admin_id;
@@ -1941,43 +2411,87 @@ import { Router as Router3 } from "express";
 import axios2 from "axios";
 import https from "https";
 var router4 = Router3();
+var usedCodes = /* @__PURE__ */ new Map();
+var CODE_EXPIRY_MS = 5 * 60 * 1e3;
+function cleanupExpiredCodes() {
+  const now = Date.now();
+  for (const [code, data] of usedCodes.entries()) {
+    if (now - data.timestamp > CODE_EXPIRY_MS) {
+      usedCodes.delete(code);
+    }
+  }
+}
+setInterval(cleanupExpiredCodes, 60 * 1e3);
 router4.post("/login", async (req, res) => {
+  const requestId = `REQ-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
   try {
     const { code, userInfo } = req.body;
+    console.log(`[WeChat Login][${requestId}] ========== \u65B0\u767B\u5F55\u8BF7\u6C42 ==========`);
+    console.log(`[WeChat Login][${requestId}] \u65F6\u95F4: ${(/* @__PURE__ */ new Date()).toISOString()}`);
+    console.log(`[WeChat Login][${requestId}] Code: ${code?.substring(0, 15)}...`);
     if (!code) {
+      console.error(`[WeChat Login][${requestId}] \u9519\u8BEF: code \u4E3A\u7A7A`);
       return res.status(400).json({
         success: false,
         message: "\u5FAE\u4FE1\u767B\u5F55\u51ED\u8BC1 code \u4E0D\u80FD\u4E3A\u7A7A"
       });
     }
+    const usedCodeData = usedCodes.get(code);
+    if (usedCodeData) {
+      console.log(`[WeChat Login][${requestId}] Code \u5DF2\u88AB\u4F7F\u7528\uFF0C\u8FD4\u56DE\u7F13\u5B58\u7684 openid: ${usedCodeData.openid}`);
+      const existingUser = await getUserByOpenId(usedCodeData.openid);
+      const sessionToken2 = await sdk.createSessionToken(usedCodeData.openid, {
+        name: existingUser?.name || userInfo?.nickName || "",
+        expiresInMs: ONE_YEAR_MS
+      });
+      const cookieOptions2 = getSessionCookieOptions(req);
+      res.cookie(COOKIE_NAME, sessionToken2, {
+        ...cookieOptions2,
+        maxAge: ONE_YEAR_MS
+      });
+      return res.json({
+        success: true,
+        user: {
+          openId: usedCodeData.openid,
+          name: existingUser?.name || userInfo?.nickName || null,
+          avatar: existingUser?.avatar || userInfo?.avatarUrl || null
+        },
+        sessionToken: sessionToken2,
+        _cached: true
+        // 标记这是缓存的结果
+      });
+    }
     const WX_APPID = process.env.WX_APPID || "wx04a7af67c8f47620";
     const WX_SECRET = process.env.WX_SECRET || "";
     if (!WX_SECRET) {
-      console.error("[WeChat Login] WX_SECRET is not configured");
+      console.error(`[WeChat Login][${requestId}] \u9519\u8BEF: WX_SECRET \u672A\u914D\u7F6E`);
       return res.status(500).json({
         success: false,
         message: "\u670D\u52A1\u5668\u914D\u7F6E\u9519\u8BEF\uFF0C\u8BF7\u8054\u7CFB\u7BA1\u7406\u5458"
       });
     }
     const wxApiUrl = `https://api.weixin.qq.com/sns/jscode2session?appid=${WX_APPID}&secret=${WX_SECRET}&js_code=${code}&grant_type=authorization_code`;
-    console.log("[WeChat Login] Calling WeChat API with AppID:", WX_APPID);
-    console.log("[WeChat Login] Code length:", code?.length || 0);
+    console.log(`[WeChat Login][${requestId}] \u8C03\u7528\u5FAE\u4FE1API, AppID: ${WX_APPID}`);
     const httpsAgent = new https.Agent({
       rejectUnauthorized: false
-      // 在云托管环境中可能需要设置为 false
     });
     const wxResponse = await axios2.get(wxApiUrl, {
       httpsAgent,
       timeout: 1e4
-      // 10秒超时
     });
     const wxData = wxResponse.data;
+    console.log(`[WeChat Login][${requestId}] \u5FAE\u4FE1API\u54CD\u5E94:`, {
+      hasOpenid: !!wxData.openid,
+      openidPrefix: wxData.openid?.substring(0, 10) || "N/A",
+      hasSessionKey: !!wxData.session_key,
+      hasUnionid: !!wxData.unionid,
+      errcode: wxData.errcode,
+      errmsg: wxData.errmsg
+    });
     if (wxData.errcode) {
-      console.error("[WeChat Login] WeChat API error:", {
+      console.error(`[WeChat Login][${requestId}] \u5FAE\u4FE1API\u9519\u8BEF:`, {
         errcode: wxData.errcode,
-        errmsg: wxData.errmsg,
-        appid: WX_APPID,
-        hasSecret: !!WX_SECRET
+        errmsg: wxData.errmsg
       });
       let errorMessage = wxData.errmsg || "\u5FAE\u4FE1\u767B\u5F55\u5931\u8D25";
       if (wxData.errcode === 40013) {
@@ -1995,34 +2509,31 @@ router4.post("/login", async (req, res) => {
         errcode: wxData.errcode
       });
     }
-    const { openid, session_key } = wxData;
+    const { openid, session_key, unionid } = wxData;
     if (!openid) {
+      console.error(`[WeChat Login][${requestId}] \u9519\u8BEF: \u672A\u83B7\u53D6\u5230 openid`);
       return res.status(400).json({
         success: false,
         message: "\u83B7\u53D6\u7528\u6237 openid \u5931\u8D25"
       });
     }
-    console.log("[WeChat Login] \u51C6\u5907\u521B\u5EFA/\u66F4\u65B0\u7528\u6237:", {
-      openId: openid,
-      name: userInfo?.nickName || null
-    });
+    usedCodes.set(code, { openid, timestamp: Date.now() });
+    console.log(`[WeChat Login][${requestId}] \u7528\u6237 openId: ${openid}`);
+    console.log(`[WeChat Login][${requestId}] \u7528\u6237\u6635\u79F0: ${userInfo?.nickName || "(\u672A\u63D0\u4F9B)"}`);
     try {
       await upsertUser({
         openId: openid,
         name: userInfo?.nickName || null,
+        avatar: userInfo?.avatarUrl || null,
         email: null,
         loginMethod: "wechat_miniprogram",
         lastSignedIn: /* @__PURE__ */ new Date()
       });
-      console.log("[WeChat Login] \u7528\u6237\u521B\u5EFA/\u66F4\u65B0\u6210\u529F");
+      console.log(`[WeChat Login][${requestId}] \u7528\u6237\u8BB0\u5F55\u5DF2\u66F4\u65B0`);
     } catch (dbError) {
-      console.error("[WeChat Login] \u6570\u636E\u5E93\u64CD\u4F5C\u5931\u8D25:", dbError);
-      console.error("[WeChat Login] \u9519\u8BEF\u8BE6\u60C5:", {
+      console.error(`[WeChat Login][${requestId}] \u6570\u636E\u5E93\u9519\u8BEF:`, {
         message: dbError?.message,
-        code: dbError?.code,
-        errno: dbError?.errno,
-        sqlState: dbError?.sqlState,
-        sqlMessage: dbError?.sqlMessage
+        code: dbError?.code
       });
       throw dbError;
     }
@@ -2030,11 +2541,13 @@ router4.post("/login", async (req, res) => {
       name: userInfo?.nickName || "",
       expiresInMs: ONE_YEAR_MS
     });
+    console.log(`[WeChat Login][${requestId}] Session token \u5DF2\u521B\u5EFA`);
     const cookieOptions = getSessionCookieOptions(req);
     res.cookie(COOKIE_NAME, sessionToken, {
       ...cookieOptions,
       maxAge: ONE_YEAR_MS
     });
+    console.log(`[WeChat Login][${requestId}] \u767B\u5F55\u6210\u529F, openId: ${openid}`);
     return res.json({
       success: true,
       user: {
@@ -2042,14 +2555,40 @@ router4.post("/login", async (req, res) => {
         name: userInfo?.nickName || null,
         avatar: userInfo?.avatarUrl || null
       },
-      // 小程序需要手动管理 cookie，所以返回 token
       sessionToken
     });
   } catch (error) {
-    console.error("[WeChat Login] Error:", error);
+    console.error(`[WeChat Login][${requestId}] \u5F02\u5E38:`, error.message);
     return res.status(500).json({
       success: false,
       message: error.message || "\u767B\u5F55\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5"
+    });
+  }
+});
+router4.get("/debug-session", async (req, res) => {
+  try {
+    const user = await sdk.authenticateRequest(req, true);
+    if (user) {
+      return res.json({
+        authenticated: true,
+        user: {
+          id: user.id,
+          openId: user.openId,
+          name: user.name,
+          avatar: user.avatar,
+          role: user.role
+        }
+      });
+    } else {
+      return res.json({
+        authenticated: false,
+        message: "\u672A\u767B\u5F55\u6216 session \u65E0\u6548"
+      });
+    }
+  } catch (error) {
+    return res.json({
+      authenticated: false,
+      error: error.message
     });
   }
 });

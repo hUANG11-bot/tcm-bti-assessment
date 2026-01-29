@@ -71,6 +71,13 @@ npm run build:weapp
 - `[myAssessments]` - 查询测评历史的日志
 - `[getUserAssessments]` - 数据库查询日志
 
+## AI 页「测评历史」未调用（getLatest）
+
+若「我的」页有测评记录，但 **AI 助手页** 拿不到最近一次测评（仍显示通用助手）：
+
+1. **getLatest 必须被请求**：AI 页已改为始终调用 `assessment.getLatest.useQuery(undefined, { enabled: 有 openId })`，不能把 useQuery 写在 `if(hasUser)` 里，否则会违反 Hooks 规则导致请求不触发。详见 `troubleshooting-ai-last-assessment.md`。
+2. **登录后必须存 session**：后端 `getLatest` 需要登录态。登录接口返回的 **sessionToken** 必须写入 **`wx.setStorageSync('app_session_cookie', sessionToken)`**，否则请求会 401，表现为「没有调用到测评历史」。
+
 ## 下一步
 
 1. **重新编译前端代码**（如果还没有）

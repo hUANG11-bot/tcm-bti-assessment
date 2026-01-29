@@ -209,11 +209,11 @@ export const appRouter = router({
       });
     }),
 
-    /** 获取最近一次测评（供 AI 聊天等调取「最后一次测评历史」使用，含 fullReport） */
+    /** 获取用户测评历史中的第一条（按时间倒序 = 最近一次），供 AI 助手作为回复依据，含 fullReport */
     getLatest: protectedProcedure.query(async ({ ctx }) => {
       const assessments = await getUserAssessments(ctx.user.id);
       if (!assessments || assessments.length === 0) return null;
-      const latest = assessments[0];
+      const latest = assessments[0]; // 测评历史按 createdAt 倒序，第一条即最近一次
       let fullReport: unknown = null;
       if (latest.fullReport) {
         try {
@@ -327,7 +327,7 @@ export const appRouter = router({
       }),
   }),
 
-  /** 小程序端可能使用复数路径 assessments.myAssessments / assessments.getLatest，此处做别名避免 404 */
+  /** 小程序端可能使用复数路径 assessments.myAssessments / assessments.getLatest，此处做别名避免 404。getLatest 返回测评历史中的第一条（时间倒序=最近一次），供 AI 助手作为回复依据。 */
   assessments: router({
     myAssessments: protectedProcedure.query(async ({ ctx }) => {
       try {
@@ -345,7 +345,7 @@ export const appRouter = router({
     getLatest: protectedProcedure.query(async ({ ctx }) => {
       const assessments = await getUserAssessments(ctx.user.id);
       if (!assessments || assessments.length === 0) return null;
-      const latest = assessments[0];
+      const latest = assessments[0]; // 测评历史按 createdAt 倒序，第一条即最近一次，作为 AI 回复依据
       let fullReport: unknown = null;
       if (latest.fullReport) {
         try {
@@ -560,23 +560,23 @@ export const appRouter = router({
           // 判断是否从历史记录进入：如果前端明确传入了age、gender或bodyType（非空值），说明是从历史记录进入
           const isFromHistory = (input.age != null && input.age !== undefined) || (input.gender && input.gender.trim() !== '') || (input.bodyType && input.bodyType.trim() !== '');
           
-          // 如果用户已登录，且不是从历史记录进入，则从最近一次测试记录获取数据
-          // 这样确保即使用户从导航栏进入AI聊天页面，也能获取到最近一次测评数据
+          // 回复依据：使用用户测评历史中的第一条（按时间倒序 = 最近一次）
+          // 若用户从导航栏进入 AI 页且未带历史参数，则从数据库取该第一条作为回复依据
           if (ctx.user && !isFromHistory) {
             try {
-              console.log(`[AI Chat] 用户已登录且不是从历史记录进入，从最近一次测试记录获取 - 用户ID: ${ctx.user.id}`);
+              console.log(`[AI Chat] 用户已登录且不是从历史记录进入，使用测评历史中的第一条作为回复依据 - 用户ID: ${ctx.user.id}`);
               const assessments = await getUserAssessments(ctx.user.id);
               console.log(`[AI Chat] 获取到 ${assessments?.length || 0} 条测评记录`);
               if (assessments && assessments.length > 0) {
-                const latestAssessment = assessments[0]; // 已经按时间倒序排列，第一条就是最新的
+                const latestAssessment = assessments[0]; // 测评历史按 createdAt 倒序，第一条即最近一次
                 console.log(`[AI Chat] 最近一次测试记录 - age: ${latestAssessment.age}, gender: ${latestAssessment.gender}, primaryType: ${latestAssessment.primaryType}`);
-                // 如果前端没有传入，使用数据库中的数据
-                if (!finalAge && latestAssessment.age) {
+                // 如果前端没有传入，使用数据库中的数据（age 为 0 也视为有效）
+                if (finalAge == null && latestAssessment.age != null) {
                   finalAge = latestAssessment.age;
                   console.log(`[AI Chat] 使用最近一次测试的年龄: ${finalAge}`);
                 }
-                if (!finalGender && latestAssessment.gender) {
-                  finalGender = latestAssessment.gender;
+                if ((finalGender == null || String(finalGender).trim() === '') && latestAssessment.gender != null && String(latestAssessment.gender).trim() !== '') {
+                  finalGender = String(latestAssessment.gender).trim();
                   console.log(`[AI Chat] 使用最近一次测试的性别: ${finalGender}`);
                 }
                 if (!finalBodyType && latestAssessment.primaryType) {
@@ -601,6 +601,26 @@ export const appRouter = router({
           } else if (!ctx.user) {
             console.log(`[AI Chat] 用户未登录，使用通用模式`);
             console.log(`[AI Chat] 调试信息 - req.cookies:`, Object.keys(ctx.req.cookies || {}));
+          }
+
+          // 若已登录但年龄/性别仍缺失（例如前端只传了 bodyType、getLatest 返回后未及时写入 age/gender），从最近一次测评补全
+          if (ctx.user && (finalAge == null || finalGender == null)) {
+            try {
+              const fillAssessments = await getUserAssessments(ctx.user.id);
+              if (fillAssessments && fillAssessments.length > 0) {
+                const fillLatest = fillAssessments[0];
+                if (finalAge == null && fillLatest.age != null) {
+                  finalAge = fillLatest.age;
+                  console.log(`[AI Chat] 从最近一次测评补全年龄: ${finalAge}`);
+                }
+                if (finalGender == null && fillLatest.gender != null && String(fillLatest.gender).trim() !== '') {
+                  finalGender = String(fillLatest.gender).trim();
+                  console.log(`[AI Chat] 从最近一次测评补全性别: ${finalGender}`);
+                }
+              }
+            } catch (e) {
+              console.error('[AI Chat] 补全年龄/性别时获取测评记录失败:', e);
+            }
           }
           
           // 构建体质类型描述
@@ -637,9 +657,13 @@ export const appRouter = router({
             }
           }
           
-          // 更新用户信息描述
-          if (finalAge && !userInfoParts.some(p => p.includes('年龄'))) {
-            userInfoParts.push(`年龄：${finalAge}岁`);
+          // 更新用户信息描述（年龄为 0 也写入，避免 AI 误判为「未提供」）
+          if (!userInfoParts.some(p => p.includes('年龄'))) {
+            if (finalAge != null && finalAge > 0) {
+              userInfoParts.push(`年龄：${finalAge}岁`);
+            } else {
+              userInfoParts.push(`年龄：未在测评中记录（若用户问「我的年龄」，请说明当前未记录并建议在个人中心完善或重新做体质测评）`);
+            }
           }
           if (finalGender && !userInfoParts.some(p => p.includes('性别'))) {
             userInfoParts.push(`性别：${finalGender}`);
@@ -649,12 +673,12 @@ export const appRouter = router({
           // 优先使用前端传入的fullReport（从历史记录或新测评进入时）
           let finalFullReport = input.fullReport;
           
-          // 如果前端没有传入fullReport，且不是从历史记录进入，尝试从最近一次测评记录中获取（从"我的"页面进入）
+          // 若未传入 fullReport，从测评历史中的第一条（最近一次）获取，作为回复依据
           if (!finalFullReport && ctx.user && !isFromHistory) {
             try {
               const assessments = await getUserAssessments(ctx.user.id);
               if (assessments && assessments.length > 0) {
-                const latestAssessment = assessments[0];
+                const latestAssessment = assessments[0]; // 第一条 = 最近一次
                 if (!latestAssessmentCreatedAt && latestAssessment.createdAt) {
                   latestAssessmentCreatedAt = latestAssessment.createdAt;
                 }
@@ -709,10 +733,7 @@ export const appRouter = router({
             userInfoParts.push(`测试时间：${timeStr}`);
           }
           
-          // 构建用户信息文本
-          // 判断数据来源：如果前端传入了age、gender或bodyType，说明是从历史记录进入（使用特定测评数据）
-          // 否则是从"我的"页面进入（使用最近一次测评数据）
-          const isFromHistory = (input.age != null && input.age !== undefined) || (input.gender && input.gender.trim() !== '') || (input.bodyType && input.bodyType.trim() !== '');
+          // 构建用户信息文本（isFromHistory 已在上面定义）
           let userInfoText = '';
           if (userInfoParts.length > 0) {
             const hasAgeOrGender = userInfoParts.some(p => p.includes('年龄') || p.includes('性别'));
@@ -786,13 +807,14 @@ export const appRouter = router({
             console.log(`[AI Chat] 使用个性化模式（已调取最后一次测评结果）`);
             const dataSource = isFromHistory ? '用户选择的测评记录' : (isLoggedIn ? '用户最近一次测试' : '前端传入的测评数据');
             if (userInfoText) {
-              systemContent += `${userInfoText}当用户询问年龄、性别、体质类型等基本信息时，请直接根据上述信息回答。例如，如果用户问"我的年龄是多少"或"我的性别是"，你应该直接回答具体的年龄和性别（这些信息来自${dataSource}），不要说"我无法获取"或"请告诉我"之类的话。`;
+              systemContent += `${userInfoText}当用户询问年龄、性别、体质类型等基本信息时，请根据上述信息回答。若上述已写明「年龄：未在测评中记录」，当用户问「我的年龄」时，请友好说明：当前未记录您的年龄，建议在个人中心完善信息或重新做一次体质测评，以便提供更精准的建议；不要说「我需要了解您的年龄」或「请告诉我您的年龄」。若已写明具体年龄/性别，则直接回答（来自${dataSource}）。`;
             } else {
               // 即使没有完整的userInfoText，只要有体质类型，也应该提供个性化建议
               if (finalBodyType) {
                 const sourceDesc = isFromHistory ? '根据您选择的测评记录' : '根据您最近一次测评结果';
                 systemContent += `${sourceDesc}，您的体质类型是${finalBodyType}${finalSecondaryType ? `，兼有${finalSecondaryType}` : ''}。`;
-                if (finalAge) systemContent += `年龄${finalAge}岁。`;
+                if (finalAge != null && finalAge > 0) systemContent += `年龄${finalAge}岁。`;
+                else systemContent += `年龄未记录（用户询问时请提示完善或重新测评）。`;
                 if (finalGender) systemContent += `性别${finalGender}。`;
               }
             }

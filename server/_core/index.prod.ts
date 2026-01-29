@@ -1,3 +1,8 @@
+/**
+ * 生产环境专用入口。不引用 vite，避免 dist/index.js 在 Node 16 下加载
+ * node_modules/vite 时报错（如 node:fs/promises constants）。
+ * 开发环境请用 server/_core/index.ts（pnpm dev）。
+ */
 import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
@@ -34,20 +39,13 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 async function startServer() {
   const app = express();
   const server = createServer(app);
-  // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
-  // Cookie parser for admin authentication
   app.use(cookieParser());
-  // REST API for admin authentication
   app.use("/api/admin", adminAuthRouter);
-  // REST API for history records
   app.use("/api", historyRouter);
-  // REST API for WeChat mini-program login
   app.use("/api/wechat", wechatLoginRouter);
-  // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
-  // tRPC API
   app.use(
     "/api/trpc",
     createExpressMiddleware({
@@ -55,13 +53,7 @@ async function startServer() {
       createContext,
     })
   );
-  // development mode uses Vite (dynamic import so production never loads Vite/Node 18+ deps), production uses static files
-  if (process.env.NODE_ENV === "development") {
-    const { setupVite } = await import("./vite");
-    await setupVite(app, server);
-  } else {
-    serveStatic(app);
-  }
+  serveStatic(app);
 
   const preferredPort = parseInt(process.env.PORT || "3000");
   const port = await findAvailablePort(preferredPort);

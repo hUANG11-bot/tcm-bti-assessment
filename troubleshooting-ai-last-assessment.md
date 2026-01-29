@@ -10,6 +10,20 @@ AI 界面显示「通用养生助手」，回复为多种体质的通用建议�
 
 **修复**：已将 `enabled:!1` 改为 `enabled:$`（$ = 已登录），这样在用户已登录时会自动请求最近一次测评。若你重新执行 `pnpm run build:weapp`，需要在**源码**里把 `myAssessments.useQuery(undefined, { enabled: false })` 改为 `enabled: isAuthenticated`（或登录态变量），否则会再次出现未调取。
 
+## 已修复：getLatest 返回 404 导致无法调取测评历史
+
+**现象**：控制台出现 `assessment.getLatest 404 (Not Found)`，AI 显示「通用养生助手」、问「我是什么体质」时仍要求用户填基本信息。
+
+**原因**：线上 er1.store 可能只挂载了复数路径 `assessments.getLatest`，或单数路径 `assessment.getLatest` 未部署。
+
+**修复**：小程序端已改为请求 **assessments.getLatest**（复数），即 `https://er1.store/api/trpc/assessments.getLatest`。若仍 404，需在 er1.store 部署包含 `assessment` 与 `assessments` 两个路由及各自 `getLatest` 的最新服务端代码（见 server/routers.ts）。
+
+## 已修复：测评历史仍未调用（getLatest useQuery 条件调用）
+
+**原因**：AI 页在 **`if($)` 内才调用** `assessment.getLatest.useQuery`，违反 React「Hooks 不能条件调用」的规则。首次渲染时若 `$` 为 false（用户信息未就绪），useQuery 根本不会执行，之后即使 `$` 变为 true 也会因 Hook 顺序错乱导致测评历史请求不触发。
+
+**修复**：改为**始终调用** `getLatest.useQuery`，用 `enabled: $` 控制是否发请求：`__=c.id.assessment.getLatest.useQuery(void 0,{enabled:$,retry:!1})`。这样有 openId 时一定会发起测评历史请求。若重新构建小程序，源码中需保证 **useQuery 无条件调用、仅用 enabled 控制**，不要写 `if(hasUser) { useQuery(...) }`。
+
 ## 原因说明
 
 后端是否能用「最后一次测评结果」取决于两点之一：
@@ -27,9 +41,11 @@ AI 界面显示「通用养生助手」，回复为多种体质的通用建议�
 
 **建议**：确认登录成功后写入 `app_session_cookie`；确认 AI 聊天使用的请求路径会走 `wx.request`（或被 session-interceptor 包装的请求）。
 
-## 2. 前端主动调取「最近一次测评历史」并传入（推荐）
+## 2. 回复依据：用户测评历史中的第一条
 
-**服务端**已提供专用接口 **`assessment.getLatest`**，返回当前用户最近一次测评（含 `primaryType`、`age`、`gender`、`fullReport` 等），供 AI 聊天使用。
+**产品约定**：AI 助手以**用户测评历史中的第一条**作为回复依据。测评历史按时间倒序排列（最新在前），因此「第一条」= **最近一次测评**。
+
+**服务端**已提供 **`assessment.getLatest`**，返回该第一条（即最近一次）测评（含 `primaryType`、`age`、`gender`、`fullReport` 等），供 AI 聊天使用；**ai.chat** 在构建上下文时也会从数据库取测评历史的第一条（`getUserAssessments` 按 `createdAt` 倒序后的 `assessments[0]`）作为回复依据。
 
 **Web / 同构前端**可使用封装好的 hook：
 
@@ -46,7 +62,7 @@ chatMutation.mutate({
 });
 ```
 
-**小程序**（无 hook 时）在进入 AI 聊天时请求 **`assessment.getLatest`**，拿到结果后每次发消息时把 `bodyType`、`secondaryType`、`age`、`gender`、`fullReport` 传给 **`ai.chat`**。
+**小程序**（无 hook 时）在进入 AI 聊天时请求 **`assessment.getLatest`**，拿到结果后每次发消息时把 `bodyType`、`secondaryType`、`age`、`gender`、`fullReport` 传给 **`ai.chat`**。若前端只传了 `bodyType` 而未传 `age`/`gender`（例如 getLatest 返回后未及时写入 state），**服务端会在已登录时从最近一次测评自动补全年龄、性别**（见 `server/routers.ts` 中 ai.chat 的「补全」逻辑）。
 
 只要请求里带了这些体质/测评数据，后端会按「已调取最后一次结果」处理，并返回个性化回复。
 

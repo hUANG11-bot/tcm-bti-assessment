@@ -1,4 +1,4 @@
-// server/_core/index.ts
+// server/_core/index.prod.ts
 import "dotenv/config";
 import express2 from "express";
 import { createServer } from "http";
@@ -27,10 +27,10 @@ var users = mysqlTable("users", {
   /** Manus OAuth identifier (openId) returned from the OAuth callback. Unique per user. */
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
+  /** 微信头像URL */
+  avatar: varchar("avatar", { length: 512 }),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  birthDate: varchar("birthDate", { length: 20 }),
-  gender: varchar("gender", { length: 10 }),
   role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -131,7 +131,7 @@ async function upsertUser(user) {
       openId: user.openId
     };
     const updateSet = {};
-    const requiredFields = ["name", "email", "loginMethod"];
+    const requiredFields = ["name", "email", "loginMethod", "avatar"];
     const optionalFields = ["birthDate", "gender"];
     const assignNullable = (field) => {
       const value = user[field];
@@ -162,6 +162,7 @@ async function upsertUser(user) {
     console.log(`[upsertUser] \u51C6\u5907\u63D2\u5165\u7684\u503C:`, {
       openId: values.openId,
       name: values.name,
+      avatar: values.avatar,
       email: values.email,
       loginMethod: values.loginMethod,
       birthDate: values.birthDate,
@@ -199,13 +200,7 @@ async function getUserByOpenId(openId) {
     console.warn("[Database] Cannot get user: database not available");
     return void 0;
   }
-  console.log("[getUserByOpenId] 查询 openId:", openId);
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
-  if (result.length > 0) {
-    console.log("[getUserByOpenId] 找到用户:", { id: result[0].id, openId: result[0].openId });
-  } else {
-    console.log("[getUserByOpenId] 未找到用户");
-  }
   return result.length > 0 ? result[0] : void 0;
 }
 
@@ -383,10 +378,17 @@ var SDKServer = class {
       const { payload } = await jwtVerify(cookieValue, secretKey, {
         algorithms: ["HS256"]
       });
-      const { openId, appId, name } = payload;
+      const { openId, appId, name, exp } = payload;
       if (!isNonEmptyString(openId)) {
-        console.warn("[Auth] Session payload missing required fields");
+        console.warn("[Auth] Session payload missing required fields (openId)");
         return null;
+      }
+      if (openId.length < 20 || openId.length > 40) {
+        console.warn("[Auth] Invalid openId format, length:", openId.length);
+        return null;
+      }
+      if (!silent) {
+        console.log("[Auth] Session verified for openId:", openId.substring(0, 10) + "...");
       }
       return {
         openId,
@@ -432,15 +434,19 @@ var SDKServer = class {
       return m && m[1] ? m[1].trim() : null;
     })();
     const sessionCookie = cookies.get(COOKIE_NAME) ?? headerSessionToken ?? authHeaderToken;
+    if (!silent) {
+      console.log(`[Auth] \u5C1D\u8BD5\u8BA4\u8BC1 - Cookie: ${cookies.get(COOKIE_NAME) ? "\u6709" : "\u65E0"}, Header Token: ${headerSessionToken ? "\u6709" : "\u65E0"}, Auth Header: ${authHeaderToken ? "\u6709" : "\u65E0"}`);
+    }
     const session = await this.verifySession(sessionCookie, silent);
     if (!session) {
+      if (!silent) {
+        console.log(`[Auth] Session\u9A8C\u8BC1\u5931\u8D25 - sessionCookie\u5B58\u5728: ${!!sessionCookie}`);
+      }
       throw ForbiddenError("Invalid session cookie");
     }
     const sessionUserId = session.openId;
-    console.log("[Auth] Session openId from token:", sessionUserId);
     const signedInAt = /* @__PURE__ */ new Date();
     let user = await getUserByOpenId(sessionUserId);
-    console.log("[Auth] User found by openId:", user ? { id: user.id, openId: user.openId, name: user.name } : "NOT FOUND");
     if (!user) {
       try {
         const userInfo = await this.getUserInfoWithJwt(sessionCookie ?? "");
@@ -657,7 +663,7 @@ var systemRouter = router({
 import { z as z2 } from "zod";
 
 // server/assessments.ts
-import { eq as eq2, desc } from "drizzle-orm";
+import { eq as eq2, desc, and } from "drizzle-orm";
 async function createAssessment(data) {
   const db = await getDb();
   if (!db) {
@@ -830,6 +836,37 @@ async function getAssessmentStats() {
     genderDistribution,
     ageGroups
   };
+}
+async function getAssessmentsByUserOrPhone(userId, phone) {
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database not available");
+  }
+  if (!userId && !phone) {
+    throw new Error("\u5FC5\u987B\u63D0\u4F9B\u7528\u6237ID\u6216\u624B\u673A\u53F7");
+  }
+  try {
+    console.log(`[getAssessmentsByUserOrPhone] \u5F00\u59CB\u67E5\u8BE2 - userId: ${userId}, phone: ${phone}`);
+    let query = db.select().from(assessments);
+    const conditions = [];
+    if (userId) {
+      conditions.push(eq2(assessments.userId, userId));
+    }
+    if (phone) {
+      conditions.push(eq2(assessments.phone, phone));
+    }
+    if (conditions.length > 1) {
+      query = query.where(and(...conditions));
+    } else if (conditions.length === 1) {
+      query = query.where(conditions[0]);
+    }
+    const result = await query.orderBy(desc(assessments.createdAt));
+    console.log(`[getAssessmentsByUserOrPhone] \u67E5\u8BE2\u6210\u529F\uFF0C\u8FD4\u56DE ${result.length} \u6761\u8BB0\u5F55`);
+    return result;
+  } catch (error) {
+    console.error("[getAssessmentsByUserOrPhone] \u67E5\u8BE2\u5931\u8D25:", error);
+    throw error;
+  }
 }
 
 // server/invitations.ts
@@ -1272,6 +1309,45 @@ async function invokeChineseLLM(params) {
 
 // server/routers.ts
 import { eq as eq5 } from "drizzle-orm";
+async function getMyAssessmentsMapped(userId) {
+  const assessments2 = await getUserAssessments(userId);
+  return assessments2.map((a) => {
+    try {
+      const result = {
+        id: Number(a.id) || 0,
+        userId: Number(a.userId) || 0,
+        age: Number(a.age) || 0,
+        gender: String(a.gender || ""),
+        primaryType: String(a.primaryType || ""),
+        secondaryType: a.secondaryType ? String(a.secondaryType) : null
+      };
+      try {
+        result.createdAt = a.createdAt instanceof Date ? a.createdAt.toISOString() : typeof a.createdAt === "string" ? a.createdAt : a.createdAt ? new Date(a.createdAt).toISOString() : (/* @__PURE__ */ new Date()).toISOString();
+      } catch {
+        result.createdAt = (/* @__PURE__ */ new Date()).toISOString();
+      }
+      try {
+        result.updatedAt = a.updatedAt instanceof Date ? a.updatedAt.toISOString() : typeof a.updatedAt === "string" ? a.updatedAt : a.updatedAt ? new Date(a.updatedAt).toISOString() : (/* @__PURE__ */ new Date()).toISOString();
+      } catch {
+        result.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+      }
+      JSON.stringify(result);
+      return result;
+    } catch (e) {
+      console.error(`[getMyAssessmentsMapped] \u5355\u6761\u5931\u8D25 ID: ${a.id}`, e);
+      return {
+        id: Number(a.id) || 0,
+        userId: Number(a.userId) || 0,
+        age: Number(a.age) || 0,
+        gender: String(a.gender || ""),
+        primaryType: String(a.primaryType || ""),
+        secondaryType: a.secondaryType ? String(a.secondaryType) : null,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    }
+  });
+}
 var appRouter = router({
   // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
   system: systemRouter,
@@ -1363,41 +1439,14 @@ var appRouter = router({
     // 获取当前用户的测评历史
     myAssessments: protectedProcedure.query(async ({ ctx }) => {
       try {
-        console.log(`[myAssessments] \u67E5\u8BE2\u7528\u6237 ${ctx.user.id} \u7684\u6D4B\u8BC4\u8BB0\u5F55`);
-        const assessments2 = await getUserAssessments(ctx.user.id);
-        console.log(`[myAssessments] \u67E5\u8BE2\u6210\u529F\uFF0C\u627E\u5230 ${assessments2.length} \u6761\u8BB0\u5F55`);
-        
-        // 安全解析 JSON
-        const safeJsonParse = (str, defaultVal) => {
-          try {
-            return JSON.parse(str);
-          } catch (e) {
-            console.error(`[myAssessments] JSON\u89E3\u6790\u5931\u8D25:`, str?.substring?.(0, 100));
-            return defaultVal;
-          }
-        };
-        
-        return assessments2.map((a) => ({
-          id: a.id,
-          userId: a.userId,
-          age: a.age,
-          gender: a.gender,
-          primaryType: a.primaryType,
-          secondaryType: a.secondaryType,
-          createdAt: a.createdAt instanceof Date ? a.createdAt.toISOString() : a.createdAt,
-          updatedAt: a.updatedAt instanceof Date ? a.updatedAt.toISOString() : a.updatedAt,
-          habits: safeJsonParse(a.habits, []),
-          answers: safeJsonParse(a.answers, {}),
-          scores: safeJsonParse(a.scores, {}),
-          fullReport: safeJsonParse(a.fullReport, {})
-        }));
+        console.log(`[assessment.myAssessments] \u67E5\u8BE2\u7528\u6237 ${ctx.user.id} \u7684\u6D4B\u8BC4\u8BB0\u5F55`);
+        const list = await getMyAssessmentsMapped(ctx.user.id);
+        console.log(`[assessment.myAssessments] \u67E5\u8BE2\u6210\u529F\uFF0C\u627E\u5230 ${list.length} \u6761\u8BB0\u5F55`);
+        return list;
       } catch (error) {
-        console.error(`[myAssessments] \u67E5\u8BE2\u5931\u8D25 - \u7528\u6237ID: ${ctx.user.id}`, error);
-        console.error(`[myAssessments] \u9519\u8BEF\u8BE6\u60C5:`, {
-          message: error?.message,
-          stack: error?.stack,
-          name: error?.name
-        });
+        const err = error;
+        console.error(`[assessment.myAssessments] \u67E5\u8BE2\u5931\u8D25 - \u7528\u6237ID: ${ctx.user.id}`, error);
+        console.error(`[assessment.myAssessments] \u9519\u8BEF\u8BE6\u60C5:`, { message: err?.message, stack: err?.stack, name: err?.name });
         throw error;
       }
     }),
@@ -1418,28 +1467,41 @@ var appRouter = router({
         };
       });
     }),
+    /** 获取用户测评历史中的第一条（按时间倒序 = 最近一次），供 AI 助手作为回复依据，含 fullReport */
+    getLatest: protectedProcedure.query(async ({ ctx }) => {
+      const assessments2 = await getUserAssessments(ctx.user.id);
+      if (!assessments2 || assessments2.length === 0) return null;
+      const latest = assessments2[0];
+      let fullReport = null;
+      if (latest.fullReport) {
+        try {
+          fullReport = typeof latest.fullReport === "string" ? JSON.parse(latest.fullReport) : latest.fullReport;
+        } catch {
+          fullReport = null;
+        }
+      }
+      return {
+        id: Number(latest.id) || 0,
+        age: Number(latest.age) || 0,
+        gender: String(latest.gender || ""),
+        primaryType: String(latest.primaryType || ""),
+        secondaryType: latest.secondaryType ? String(latest.secondaryType) : null,
+        createdAt: latest.createdAt instanceof Date ? latest.createdAt.toISOString() : String(latest.createdAt ?? ""),
+        fullReport
+      };
+    }),
     // 获取单条测评记录
     getById: protectedProcedure.input(z2.object({ id: z2.number() })).query(async ({ input }) => {
       const assessment = await getAssessmentById(input.id);
       if (!assessment) {
         throw new Error("Assessment not found");
       }
-      const safeJsonParse = (str, defaultVal) => {
-        try { return JSON.parse(str); } catch (e) { return defaultVal; }
-      };
       return {
-        id: assessment.id,
-        userId: assessment.userId,
-        age: assessment.age,
-        gender: assessment.gender,
-        primaryType: assessment.primaryType,
-        secondaryType: assessment.secondaryType,
-        createdAt: assessment.createdAt instanceof Date ? assessment.createdAt.toISOString() : assessment.createdAt,
-        updatedAt: assessment.updatedAt instanceof Date ? assessment.updatedAt.toISOString() : assessment.updatedAt,
-        habits: safeJsonParse(assessment.habits, []),
-        answers: safeJsonParse(assessment.answers, {}),
-        scores: safeJsonParse(assessment.scores, {}),
-        fullReport: safeJsonParse(assessment.fullReport, {})
+        ...assessment,
+        habits: JSON.parse(assessment.habits),
+        answers: JSON.parse(assessment.answers),
+        scores: JSON.parse(assessment.scores),
+        fullReport: JSON.parse(assessment.fullReport)
       };
     }),
     // 删除测评记录
@@ -1467,6 +1529,82 @@ var appRouter = router({
         throw new Error("Unauthorized: Admin access required");
       }
       return getAssessmentStats();
+    }),
+    // 管理员：根据用户ID或手机号查询测评记录
+    getByUserOrPhone: protectedProcedure.input(
+      z2.object({
+        userId: z2.number().optional(),
+        phone: z2.string().optional()
+      })
+    ).query(async ({ ctx, input }) => {
+      if (ctx.user.role !== "admin") {
+        throw new Error("Unauthorized: Admin access required");
+      }
+      const assessments2 = await getAssessmentsByUserOrPhone(
+        input.userId,
+        input.phone
+      );
+      const safeJsonParse = (str, defaultVal = null) => {
+        try {
+          return JSON.parse(str);
+        } catch (e) {
+          console.error(`[getByUserOrPhone] JSON\u89E3\u6790\u5931\u8D25:`, str?.substring(0, 100));
+          return defaultVal;
+        }
+      };
+      return assessments2.map((a) => ({
+        id: a.id,
+        userId: a.userId,
+        phone: a.phone,
+        age: a.age,
+        gender: a.gender,
+        primaryType: a.primaryType,
+        secondaryType: a.secondaryType,
+        createdAt: a.createdAt instanceof Date ? a.createdAt.toISOString() : a.createdAt,
+        updatedAt: a.updatedAt instanceof Date ? a.updatedAt.toISOString() : a.updatedAt,
+        habits: safeJsonParse(a.habits, []),
+        answers: safeJsonParse(a.answers, {}),
+        scores: safeJsonParse(a.scores, {}),
+        fullReport: safeJsonParse(a.fullReport, {})
+      }));
+    })
+  }),
+  /** 小程序端可能使用复数路径 assessments.myAssessments / assessments.getLatest，此处做别名避免 404。getLatest 返回测评历史中的第一条（时间倒序=最近一次），供 AI 助手作为回复依据。 */
+  assessments: router({
+    myAssessments: protectedProcedure.query(async ({ ctx }) => {
+      try {
+        console.log(`[assessments.myAssessments] \u67E5\u8BE2\u7528\u6237 ${ctx.user.id} \u7684\u6D4B\u8BC4\u8BB0\u5F55`);
+        const list = await getMyAssessmentsMapped(ctx.user.id);
+        console.log(`[assessments.myAssessments] \u67E5\u8BE2\u6210\u529F\uFF0C\u627E\u5230 ${list.length} \u6761\u8BB0\u5F55`);
+        return list;
+      } catch (error) {
+        const err = error;
+        console.error(`[assessments.myAssessments] \u67E5\u8BE2\u5931\u8D25 - \u7528\u6237ID: ${ctx.user.id}`, error);
+        console.error(`[assessments.myAssessments] \u9519\u8BEF\u8BE6\u60C5:`, { message: err?.message, stack: err?.stack, name: err?.name });
+        throw error;
+      }
+    }),
+    getLatest: protectedProcedure.query(async ({ ctx }) => {
+      const assessments2 = await getUserAssessments(ctx.user.id);
+      if (!assessments2 || assessments2.length === 0) return null;
+      const latest = assessments2[0];
+      let fullReport = null;
+      if (latest.fullReport) {
+        try {
+          fullReport = typeof latest.fullReport === "string" ? JSON.parse(latest.fullReport) : latest.fullReport;
+        } catch {
+          fullReport = null;
+        }
+      }
+      return {
+        id: Number(latest.id) || 0,
+        age: Number(latest.age) || 0,
+        gender: String(latest.gender || ""),
+        primaryType: String(latest.primaryType || ""),
+        secondaryType: latest.secondaryType ? String(latest.secondaryType) : null,
+        createdAt: latest.createdAt instanceof Date ? latest.createdAt.toISOString() : String(latest.createdAt ?? ""),
+        fullReport
+      };
     })
   }),
   invitation: router({
@@ -1591,27 +1729,102 @@ var appRouter = router({
         // 用户次要体质类型
         age: z2.number().nullish(),
         // 用户年龄（允许 null）
-        gender: z2.string().nullish()
+        gender: z2.string().nullish(),
         // 用户性别（允许 null）
+        fullReport: z2.any().nullish()
+        // 完整测试结果（包含dimensions等详细信息）
       })
     ).mutation(async ({ input, ctx }) => {
       try {
+        console.log(`[AI Chat] \u8BF7\u6C42\u5F00\u59CB - \u7528\u6237\u767B\u5F55\u72B6\u6001: ${ctx.user ? `\u5DF2\u767B\u5F55 (ID: ${ctx.user.id}, openId: ${ctx.user.openId.substring(0, 10)}...)` : "\u672A\u767B\u5F55"}`);
+        console.log(`[AI Chat] \u8BF7\u6C42\u5934\u4FE1\u606F - x-session-token: ${ctx.req.headers["x-session-token"] ? "\u6709" : "\u65E0"}, X-Session-Token: ${ctx.req.headers["X-Session-Token"] ? "\u6709" : "\u65E0"}, Cookie: ${ctx.req.headers.cookie ? "\u6709" : "\u65E0"}`);
         const userInfoParts = [];
-        if (input.bodyType) {
-          let bodyTypeDesc = `\u4F53\u8D28\u7C7B\u578B\uFF1A${input.bodyType}`;
-          if (input.secondaryType) {
-            bodyTypeDesc += `\uFF0C\u517C\u6709${input.secondaryType}`;
+        let finalAge = void 0;
+        let finalGender = void 0;
+        let finalBodyType = void 0;
+        let finalSecondaryType = void 0;
+        let latestAssessmentCreatedAt = void 0;
+        if (input.age != null && input.age !== void 0) {
+          finalAge = input.age;
+          console.log(`[AI Chat] \u4F7F\u7528\u524D\u7AEF\u4F20\u5165\u7684\u5E74\u9F84: ${finalAge}`);
+        }
+        if (input.gender && input.gender.trim() !== "") {
+          finalGender = input.gender;
+          console.log(`[AI Chat] \u4F7F\u7528\u524D\u7AEF\u4F20\u5165\u7684\u6027\u522B: ${finalGender}`);
+        }
+        if (input.bodyType && input.bodyType.trim() !== "") {
+          finalBodyType = input.bodyType;
+          console.log(`[AI Chat] \u4F7F\u7528\u524D\u7AEF\u4F20\u5165\u7684\u4F53\u8D28\u7C7B\u578B: ${finalBodyType}`);
+        }
+        if (input.secondaryType && input.secondaryType.trim() !== "") {
+          finalSecondaryType = input.secondaryType;
+          console.log(`[AI Chat] \u4F7F\u7528\u524D\u7AEF\u4F20\u5165\u7684\u6B21\u8981\u4F53\u8D28\u7C7B\u578B: ${finalSecondaryType}`);
+        }
+        const isFromHistory = input.age != null && input.age !== void 0 || input.gender && input.gender.trim() !== "" || input.bodyType && input.bodyType.trim() !== "";
+        if (ctx.user && !isFromHistory) {
+          try {
+            console.log(`[AI Chat] \u7528\u6237\u5DF2\u767B\u5F55\u4E14\u4E0D\u662F\u4ECE\u5386\u53F2\u8BB0\u5F55\u8FDB\u5165\uFF0C\u4F7F\u7528\u6D4B\u8BC4\u5386\u53F2\u4E2D\u7684\u7B2C\u4E00\u6761\u4F5C\u4E3A\u56DE\u590D\u4F9D\u636E - \u7528\u6237ID: ${ctx.user.id}`);
+            const assessments2 = await getUserAssessments(ctx.user.id);
+            console.log(`[AI Chat] \u83B7\u53D6\u5230 ${assessments2?.length || 0} \u6761\u6D4B\u8BC4\u8BB0\u5F55`);
+            if (assessments2 && assessments2.length > 0) {
+              const latestAssessment = assessments2[0];
+              console.log(`[AI Chat] \u6700\u8FD1\u4E00\u6B21\u6D4B\u8BD5\u8BB0\u5F55 - age: ${latestAssessment.age}, gender: ${latestAssessment.gender}, primaryType: ${latestAssessment.primaryType}`);
+              if (finalAge == null && latestAssessment.age != null) {
+                finalAge = latestAssessment.age;
+                console.log(`[AI Chat] \u4F7F\u7528\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BD5\u7684\u5E74\u9F84: ${finalAge}`);
+              }
+              if ((finalGender == null || String(finalGender).trim() === "") && latestAssessment.gender != null && String(latestAssessment.gender).trim() !== "") {
+                finalGender = String(latestAssessment.gender).trim();
+                console.log(`[AI Chat] \u4F7F\u7528\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BD5\u7684\u6027\u522B: ${finalGender}`);
+              }
+              if (!finalBodyType && latestAssessment.primaryType) {
+                finalBodyType = latestAssessment.primaryType;
+                console.log(`[AI Chat] \u4F7F\u7528\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BD5\u7684\u4F53\u8D28\u7C7B\u578B: ${finalBodyType}`);
+              }
+              if (!finalSecondaryType && latestAssessment.secondaryType) {
+                finalSecondaryType = latestAssessment.secondaryType;
+                console.log(`[AI Chat] \u4F7F\u7528\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BD5\u7684\u6B21\u8981\u4F53\u8D28\u7C7B\u578B: ${finalSecondaryType}`);
+              }
+              latestAssessmentCreatedAt = latestAssessment.createdAt;
+              console.log(`[AI Chat] \u6700\u7EC8\u4F7F\u7528\u7684\u6570\u636E - age: ${finalAge}, gender: ${finalGender}, bodyType: ${finalBodyType}, secondaryType: ${finalSecondaryType}`);
+            } else {
+              console.log(`[AI Chat] \u7528\u6237 ${ctx.user.id} \u6CA1\u6709\u6D4B\u8BC4\u8BB0\u5F55`);
+            }
+          } catch (e) {
+            console.error("[AI Chat] \u83B7\u53D6\u6D4B\u8BC4\u8BB0\u5F55\u5931\u8D25:", e);
+            console.error("[AI Chat] \u9519\u8BEF\u5806\u6808:", e instanceof Error ? e.stack : "\u65E0\u5806\u6808\u4FE1\u606F");
+          }
+        } else if (ctx.user && isFromHistory) {
+          console.log(`[AI Chat] \u4ECE\u5386\u53F2\u8BB0\u5F55\u8FDB\u5165\uFF0C\u4F7F\u7528\u524D\u7AEF\u4F20\u5165\u7684\u7279\u5B9A\u6D4B\u8BC4\u6570\u636E`);
+        } else if (!ctx.user) {
+          console.log(`[AI Chat] \u7528\u6237\u672A\u767B\u5F55\uFF0C\u4F7F\u7528\u901A\u7528\u6A21\u5F0F`);
+          console.log(`[AI Chat] \u8C03\u8BD5\u4FE1\u606F - req.cookies:`, Object.keys(ctx.req.cookies || {}));
+        }
+        if (ctx.user && (finalAge == null || finalGender == null)) {
+          try {
+            const fillAssessments = await getUserAssessments(ctx.user.id);
+            if (fillAssessments && fillAssessments.length > 0) {
+              const fillLatest = fillAssessments[0];
+              if (finalAge == null && fillLatest.age != null) {
+                finalAge = fillLatest.age;
+                console.log(`[AI Chat] \u4ECE\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BC4\u8865\u5168\u5E74\u9F84: ${finalAge}`);
+              }
+              if (finalGender == null && fillLatest.gender != null && String(fillLatest.gender).trim() !== "") {
+                finalGender = String(fillLatest.gender).trim();
+                console.log(`[AI Chat] \u4ECE\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BC4\u8865\u5168\u6027\u522B: ${finalGender}`);
+              }
+            }
+          } catch (e) {
+            console.error("[AI Chat] \u8865\u5168\u5E74\u9F84/\u6027\u522B\u65F6\u83B7\u53D6\u6D4B\u8BC4\u8BB0\u5F55\u5931\u8D25:", e);
+          }
+        }
+        if (finalBodyType) {
+          let bodyTypeDesc = `\u4F53\u8D28\u7C7B\u578B\uFF1A${finalBodyType}`;
+          if (finalSecondaryType) {
+            bodyTypeDesc += `\uFF0C\u517C\u6709${finalSecondaryType}`;
           }
           userInfoParts.push(bodyTypeDesc);
         }
-        if (input.age != null) {
-          userInfoParts.push(`\u5E74\u9F84\uFF1A${input.age}\u5C81`);
-        }
-        if (input.gender) {
-          userInfoParts.push(`\u6027\u522B\uFF1A${input.gender}`);
-        }
-        let finalAge = input.age ?? void 0;
-        let finalGender = input.gender ?? void 0;
         if (ctx.user && (!finalAge || !finalGender)) {
           if (!finalGender && ctx.user.gender) {
             finalGender = ctx.user.gender;
@@ -1630,17 +1843,158 @@ var appRouter = router({
             } catch (e) {
             }
           }
-          if (finalAge && !userInfoParts.some((p) => p.includes("\u5E74\u9F84"))) {
+        }
+        if (!userInfoParts.some((p) => p.includes("\u5E74\u9F84"))) {
+          if (finalAge != null && finalAge > 0) {
             userInfoParts.push(`\u5E74\u9F84\uFF1A${finalAge}\u5C81`);
-          }
-          if (finalGender && !userInfoParts.some((p) => p.includes("\u6027\u522B"))) {
-            userInfoParts.push(`\u6027\u522B\uFF1A${finalGender}`);
+          } else {
+            userInfoParts.push(`\u5E74\u9F84\uFF1A\u672A\u5728\u6D4B\u8BC4\u4E2D\u8BB0\u5F55\uFF08\u82E5\u7528\u6237\u95EE\u300C\u6211\u7684\u5E74\u9F84\u300D\uFF0C\u8BF7\u8BF4\u660E\u5F53\u524D\u672A\u8BB0\u5F55\u5E76\u5EFA\u8BAE\u5728\u4E2A\u4EBA\u4E2D\u5FC3\u5B8C\u5584\u6216\u91CD\u65B0\u505A\u4F53\u8D28\u6D4B\u8BC4\uFF09`);
           }
         }
-        const userInfoText = userInfoParts.length > 0 ? `\u5F53\u524D\u54A8\u8BE2\u7528\u6237\u7684\u57FA\u672C\u4FE1\u606F\uFF1A${userInfoParts.join("\uFF0C")}\u3002` : "";
+        if (finalGender && !userInfoParts.some((p) => p.includes("\u6027\u522B"))) {
+          userInfoParts.push(`\u6027\u522B\uFF1A${finalGender}`);
+        }
+        let finalFullReport = input.fullReport;
+        if (!finalFullReport && ctx.user && !isFromHistory) {
+          try {
+            const assessments2 = await getUserAssessments(ctx.user.id);
+            if (assessments2 && assessments2.length > 0) {
+              const latestAssessment = assessments2[0];
+              if (!latestAssessmentCreatedAt && latestAssessment.createdAt) {
+                latestAssessmentCreatedAt = latestAssessment.createdAt;
+              }
+              if (latestAssessment.fullReport) {
+                try {
+                  finalFullReport = typeof latestAssessment.fullReport === "string" ? JSON.parse(latestAssessment.fullReport) : latestAssessment.fullReport;
+                  console.log(`[AI Chat] \u4ECE\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BC4\u8BB0\u5F55\u83B7\u53D6fullReport`);
+                } catch (e) {
+                  console.error("[AI Chat] \u89E3\u6790\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BC4\u7684fullReport\u5931\u8D25:", e);
+                }
+              }
+            }
+          } catch (e) {
+            console.error("[AI Chat] \u83B7\u53D6\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BC4\u7684fullReport\u5931\u8D25:", e);
+          }
+        }
+        if (finalFullReport && typeof finalFullReport === "object") {
+          const fullReport = finalFullReport;
+          if (fullReport.description && typeof fullReport.description === "string") {
+            userInfoParts.push(`\u4F53\u8D28\u6838\u5FC3\u7279\u5F81\uFF1A${fullReport.description}`);
+          }
+          if (fullReport.recommendations && typeof fullReport.recommendations === "object") {
+            const rec = fullReport.recommendations;
+            const tips = [];
+            if (rec.diet?.principle) tips.push(rec.diet.principle);
+            if (rec.exercise) tips.push(`\u8FD0\u52A8\uFF1A${rec.exercise}`);
+            if (rec.lifestyle) tips.push(`\u8D77\u5C45\uFF1A${rec.lifestyle}`);
+            if (tips.length > 0) {
+              userInfoParts.push(`\u7CFB\u7EDF\u7ED9\u51FA\u7684\u57FA\u7840\u517B\u751F\u5EFA\u8BAE\uFF1A${tips.join("\uFF1B")}`);
+            }
+          }
+          if (fullReport.dimensions && Array.isArray(fullReport.dimensions)) {
+            const dimensionInfo = fullReport.dimensions.map((d) => {
+              if (d.dimension && d.scoreLeft !== void 0 && d.scoreRight !== void 0) {
+                return `${d.dimension}: \u5DE6\u4FA7${d.scoreLeft}\u5206, \u53F3\u4FA7${d.scoreRight}\u5206, \u5DEE\u503C${d.diff || Math.abs(d.scoreLeft - d.scoreRight)}`;
+              }
+              return null;
+            }).filter(Boolean).join("; ");
+            if (dimensionInfo) {
+              userInfoParts.push(`\u8BE6\u7EC6\u6D4B\u8BD5\u7EF4\u5EA6\u5F97\u5206\uFF1A${dimensionInfo}`);
+            }
+          }
+        }
+        if (latestAssessmentCreatedAt) {
+          const timeStr = latestAssessmentCreatedAt instanceof Date ? latestAssessmentCreatedAt.toISOString().slice(0, 10) : String(latestAssessmentCreatedAt).slice(0, 10);
+          userInfoParts.push(`\u6D4B\u8BD5\u65F6\u95F4\uFF1A${timeStr}`);
+        }
+        let userInfoText = "";
+        if (userInfoParts.length > 0) {
+          const hasAgeOrGender = userInfoParts.some((p) => p.includes("\u5E74\u9F84") || p.includes("\u6027\u522B"));
+          const prefix = hasAgeOrGender ? isFromHistory ? "\u5F53\u524D\u54A8\u8BE2\u7528\u6237\u7684\u57FA\u672C\u4FE1\u606F\uFF08\u57FA\u4E8E\u7528\u6237\u9009\u62E9\u7684\u6D4B\u8BC4\u8BB0\u5F55\uFF09\uFF1A" : "\u5F53\u524D\u54A8\u8BE2\u7528\u6237\u7684\u57FA\u672C\u4FE1\u606F\uFF08\u57FA\u4E8E\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BD5\uFF09\uFF1A" : "\u5F53\u524D\u54A8\u8BE2\u7528\u6237\u7684\u57FA\u672C\u4FE1\u606F\uFF1A";
+          userInfoText = `${prefix}${userInfoParts.join("\uFF0C")}\u3002`;
+        }
+        let systemContent = `\u3010\u89D2\u8272\u5B9A\u4F4D\u3011\u4F60\u662F\u5FAE\u4FE1\u5C0F\u7A0B\u5E8F\u4E2D\u4E13\u4E1A\u3001\u4EB2\u5207\u7684\u4E2D\u533B\u517B\u751F\u52A9\u624B\uFF0C\u7CBE\u901A\u4E2D\u533B\u4F53\u8D28\u7406\u8BBA\u548C\u65E5\u5E38\u517B\u751F\u77E5\u8BC6\uFF0C\u6838\u5FC3\u670D\u52A1\u4E8E\u5B8C\u6210\u8FC7\u4E2D\u533B\u4F53\u8D28\u6D4B\u8BD5\u7684\u7528\u6237\uFF0C\u4EA4\u4E92\u98CE\u683C\u6E29\u548C\u3001\u6613\u61C2\uFF0C\u7B26\u5408\u5927\u4F17\u5BF9\u4E2D\u533B\u517B\u751F\u7684\u8BA4\u77E5\u4E60\u60EF\u3002`;
+        systemContent += `\u3010\u6570\u636E\u8C03\u53D6\u3011\u53EA\u8981\u68C0\u6D4B\u5230\u7528\u6237\u5DF2\u767B\u5F55\uFF0C\u5FC5\u987B\u4F18\u5148\u4F7F\u7528\u5176\u300C\u6700\u540E\u4E00\u6B21\u4E2D\u533B\u4F53\u8D28\u6D4B\u8BD5\u7ED3\u679C\u300D\u5C55\u5F00\u56DE\u590D\uFF0C\u7ED3\u679C\u5305\u542B\uFF1A\u4F53\u8D28\u7C7B\u578B\u3001\u4F53\u8D28\u6838\u5FC3\u7279\u5F81\u3001\u6D4B\u8BD5\u65F6\u95F4\u3001\u7CFB\u7EDF\u7ED9\u51FA\u7684\u57FA\u7840\u517B\u751F\u5EFA\u8BAE\u3002\u6240\u6709\u56DE\u590D\u5FC5\u987B\u57FA\u4E8E\u8BE5\u7ED3\u679C\u5C55\u5F00\uFF0C\u7981\u6B62\u8131\u79BB\u8BE5\u7ED3\u679C\u6CDB\u6CDB\u56DE\u7B54\u517B\u751F\u95EE\u9898\u3002`;
+        systemContent += `\u3010\u56DE\u590D\u5F00\u5934\u3011\u6709\u4F53\u8D28\u6570\u636E\u65F6\uFF0C\u56DE\u590D\u5F00\u5934\u9700\u4E3B\u52A8\u63D0\u53CA\u7528\u6237\u4F53\u8D28\u5E76\u5173\u8054\u4F53\u8D28\u7279\u5F81\uFF0C\u4F8B\u5982\uFF1A"\u4F60\u662FXX\u8D28\uFF0C\u9488\u5BF9\u4F60\u5BB9\u6613[\u4F53\u8D28\u7279\u5F81\uFF0C\u5982\u53E3\u5E72\u820C\u71E5]\u7684\u60C5\u51B5\uFF0C\u5EFA\u8BAE\u2026\u2026"\u3002`;
+        const isLoggedIn = !!ctx.user;
+        if (!finalBodyType && !(finalAge && finalGender)) {
+          if (isLoggedIn && !isFromHistory) {
+            console.log(`[AI Chat] \u524D\u7AEF\u672A\u4F20\u5165\u6570\u636E\u4E14\u7528\u6237\u5DF2\u767B\u5F55\uFF0C\u4ECE\u6570\u636E\u5E93\u83B7\u53D6\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BC4\u8BB0\u5F55 - \u7528\u6237ID: ${ctx.user.id}`);
+            try {
+              const retryAssessments = await getUserAssessments(ctx.user.id);
+              console.log(`[AI Chat] \u6570\u636E\u5E93\u67E5\u8BE2 - \u83B7\u53D6\u5230 ${retryAssessments?.length || 0} \u6761\u6D4B\u8BC4\u8BB0\u5F55`);
+              if (retryAssessments && retryAssessments.length > 0) {
+                const retryLatest = retryAssessments[0];
+                console.log(`[AI Chat] \u6570\u636E\u5E93\u67E5\u8BE2\u7ED3\u679C - primaryType: ${retryLatest.primaryType}, age: ${retryLatest.age}, gender: ${retryLatest.gender}`);
+                if (!finalBodyType && retryLatest.primaryType) {
+                  finalBodyType = retryLatest.primaryType;
+                  console.log(`[AI Chat] \u4ECE\u6570\u636E\u5E93\u8BBE\u7F6E bodyType: ${finalBodyType}`);
+                }
+                if (!finalAge && retryLatest.age) {
+                  finalAge = retryLatest.age;
+                  console.log(`[AI Chat] \u4ECE\u6570\u636E\u5E93\u8BBE\u7F6E age: ${finalAge}`);
+                }
+                if (!finalGender && retryLatest.gender) {
+                  finalGender = retryLatest.gender;
+                  console.log(`[AI Chat] \u4ECE\u6570\u636E\u5E93\u8BBE\u7F6E gender: ${finalGender}`);
+                }
+                if (!finalSecondaryType && retryLatest.secondaryType) {
+                  finalSecondaryType = retryLatest.secondaryType;
+                  console.log(`[AI Chat] \u4ECE\u6570\u636E\u5E93\u8BBE\u7F6E secondaryType: ${finalSecondaryType}`);
+                }
+              } else {
+                console.log(`[AI Chat] \u6570\u636E\u5E93\u67E5\u8BE2 - \u7528\u6237 ${ctx.user.id} \u6CA1\u6709\u6D4B\u8BC4\u8BB0\u5F55`);
+              }
+            } catch (retryError) {
+              console.error("[AI Chat] \u6570\u636E\u5E93\u67E5\u8BE2\u5931\u8D25:", retryError);
+              console.error("[AI Chat] \u9519\u8BEF\u5806\u6808:", retryError instanceof Error ? retryError.stack : "\u65E0\u5806\u6808\u4FE1\u606F");
+            }
+          } else if (!isLoggedIn) {
+            console.log(`[AI Chat] \u524D\u7AEF\u672A\u4F20\u5165\u6570\u636E\u4E14\u7528\u6237\u672A\u767B\u5F55\uFF0C\u65E0\u6CD5\u4ECE\u6570\u636E\u5E93\u83B7\u53D6\u6570\u636E`);
+          } else if (isFromHistory) {
+            console.log(`[AI Chat] \u4ECE\u5386\u53F2\u8BB0\u5F55\u8FDB\u5165\uFF0C\u4F46\u524D\u7AEF\u672A\u4F20\u5165\u6570\u636E\uFF0C\u8FD9\u4E0D\u5E94\u8BE5\u53D1\u751F`);
+          }
+        }
+        const hasUserInfo = !!(finalBodyType || finalAge && finalGender);
+        const usedLastAssessment = hasUserInfo;
+        console.log(`[AI Chat] \u6700\u7EC8\u72B6\u6001 - isLoggedIn: ${isLoggedIn}, hasUserInfo: ${hasUserInfo}, usedLastAssessment: ${usedLastAssessment}, finalBodyType: ${finalBodyType}, finalAge: ${finalAge}, finalGender: ${finalGender}`);
+        console.log(`[AI Chat] \u524D\u7AEF\u4F20\u5165\u7684\u53C2\u6570 - bodyType: ${input.bodyType}, age: ${input.age}, gender: ${input.gender}, secondaryType: ${input.secondaryType}`);
+        console.log(`[AI Chat] isFromHistory: ${isFromHistory}`);
+        if (hasUserInfo) {
+          console.log(`[AI Chat] \u4F7F\u7528\u4E2A\u6027\u5316\u6A21\u5F0F\uFF08\u5DF2\u8C03\u53D6\u6700\u540E\u4E00\u6B21\u6D4B\u8BC4\u7ED3\u679C\uFF09`);
+          const dataSource = isFromHistory ? "\u7528\u6237\u9009\u62E9\u7684\u6D4B\u8BC4\u8BB0\u5F55" : isLoggedIn ? "\u7528\u6237\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BD5" : "\u524D\u7AEF\u4F20\u5165\u7684\u6D4B\u8BC4\u6570\u636E";
+          if (userInfoText) {
+            systemContent += `${userInfoText}\u5F53\u7528\u6237\u8BE2\u95EE\u5E74\u9F84\u3001\u6027\u522B\u3001\u4F53\u8D28\u7C7B\u578B\u7B49\u57FA\u672C\u4FE1\u606F\u65F6\uFF0C\u8BF7\u6839\u636E\u4E0A\u8FF0\u4FE1\u606F\u56DE\u7B54\u3002\u82E5\u4E0A\u8FF0\u5DF2\u5199\u660E\u300C\u5E74\u9F84\uFF1A\u672A\u5728\u6D4B\u8BC4\u4E2D\u8BB0\u5F55\u300D\uFF0C\u5F53\u7528\u6237\u95EE\u300C\u6211\u7684\u5E74\u9F84\u300D\u65F6\uFF0C\u8BF7\u53CB\u597D\u8BF4\u660E\uFF1A\u5F53\u524D\u672A\u8BB0\u5F55\u60A8\u7684\u5E74\u9F84\uFF0C\u5EFA\u8BAE\u5728\u4E2A\u4EBA\u4E2D\u5FC3\u5B8C\u5584\u4FE1\u606F\u6216\u91CD\u65B0\u505A\u4E00\u6B21\u4F53\u8D28\u6D4B\u8BC4\uFF0C\u4EE5\u4FBF\u63D0\u4F9B\u66F4\u7CBE\u51C6\u7684\u5EFA\u8BAE\uFF1B\u4E0D\u8981\u8BF4\u300C\u6211\u9700\u8981\u4E86\u89E3\u60A8\u7684\u5E74\u9F84\u300D\u6216\u300C\u8BF7\u544A\u8BC9\u6211\u60A8\u7684\u5E74\u9F84\u300D\u3002\u82E5\u5DF2\u5199\u660E\u5177\u4F53\u5E74\u9F84/\u6027\u522B\uFF0C\u5219\u76F4\u63A5\u56DE\u7B54\uFF08\u6765\u81EA${dataSource}\uFF09\u3002`;
+          } else {
+            if (finalBodyType) {
+              const sourceDesc = isFromHistory ? "\u6839\u636E\u60A8\u9009\u62E9\u7684\u6D4B\u8BC4\u8BB0\u5F55" : "\u6839\u636E\u60A8\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BC4\u7ED3\u679C";
+              systemContent += `${sourceDesc}\uFF0C\u60A8\u7684\u4F53\u8D28\u7C7B\u578B\u662F${finalBodyType}${finalSecondaryType ? `\uFF0C\u517C\u6709${finalSecondaryType}` : ""}\u3002`;
+              if (finalAge != null && finalAge > 0) systemContent += `\u5E74\u9F84${finalAge}\u5C81\u3002`;
+              else systemContent += `\u5E74\u9F84\u672A\u8BB0\u5F55\uFF08\u7528\u6237\u8BE2\u95EE\u65F6\u8BF7\u63D0\u793A\u5B8C\u5584\u6216\u91CD\u65B0\u6D4B\u8BC4\uFF09\u3002`;
+              if (finalGender) systemContent += `\u6027\u522B${finalGender}\u3002`;
+            }
+          }
+          systemContent += `\u8BF7\u7ED3\u5408\u7528\u6237\u7684\u8FD9\u4E9B\u4FE1\u606F\uFF08\u5305\u62EC\u5E74\u9F84\u3001\u6027\u522B\u3001\u4F53\u8D28\u7C7B\u578B\u3001\u751F\u6D3B\u4E60\u60EF\u7B49\uFF09\uFF0C\u7528\u4E13\u4E1A\u4F46\u6613\u61C2\u7684\u8BED\u8A00\u56DE\u7B54\u7528\u6237\u7684\u95EE\u9898\uFF0C\u63D0\u4F9B\u4E2A\u6027\u5316\u7684\u4E2D\u533B\u517B\u751F\u5EFA\u8BAE\u3002`;
+          if (finalBodyType) {
+            systemContent += `\u91CD\u8981\uFF1A\u7528\u6237\u7684\u4F53\u8D28\u7C7B\u578B\u662F${finalBodyType}${finalSecondaryType ? `\uFF08\u517C\u6709${finalSecondaryType}\uFF09` : ""}\u3002\u8FD9\u662F\u57FA\u4E8E\u7528\u6237\u5B8C\u6210\u7684\u4F53\u8D28\u6D4B\u8BC4\u7ED3\u679C\u5F97\u51FA\u7684\u786E\u5B9A\u5224\u65AD\uFF0C\u4E0D\u662F\u63A8\u6D4B\u3002\u56DE\u7B54\u65F6\u5FC5\u987B\uFF1A`;
+            systemContent += `1. \u76F4\u63A5\u8BF4\u660E"\u60A8\u7684\u4F53\u8D28\u662F${finalBodyType}"\u6216"\u6839\u636E\u60A8\u7684\u6D4B\u8BC4\u7ED3\u679C\uFF0C\u60A8\u7684\u4F53\u8D28\u662F${finalBodyType}"\uFF0C\u7EDD\u5BF9\u4E0D\u8981\u4F7F\u7528"\u53EF\u80FD"\u3001"\u4E5F\u8BB8"\u3001"\u6216\u8BB8"\u7B49\u4E0D\u786E\u5B9A\u7684\u63AA\u8F9E\uFF1B`;
+            systemContent += `2. \u4E13\u95E8\u9488\u5BF9${finalBodyType}\u4F53\u8D28\u7684\u7279\u70B9\u7ED9\u51FA\u5EFA\u8BAE\uFF0C\u4E0D\u8981\u63D0\u4F9B\u901A\u7528\u7684\u591A\u4F53\u8D28\u5EFA\u8BAE\uFF0C\u4E0D\u8981\u5217\u4E3E\u5176\u4ED6\u4F53\u8D28\u7C7B\u578B\u7684\u5EFA\u8BAE\uFF1B`;
+            systemContent += `3. \u4E0D\u8981\u5EFA\u8BAE\u7528\u6237"\u5B8C\u6210\u6D4B\u8BC4"\u6216"\u8FDB\u884C\u66F4\u7CBE\u51C6\u5224\u65AD"\uFF0C\u56E0\u4E3A\u7528\u6237\u5DF2\u7ECF\u5B8C\u6210\u4E86\u6D4B\u8BC4\u5E76\u5F97\u5230\u4E86\u786E\u5B9A\u7684\u7ED3\u679C\u3002`;
+          }
+        } else if (!isLoggedIn) {
+          console.log(`[AI Chat] \u4F7F\u7528\u901A\u7528\u6A21\u5F0F\uFF08\u672A\u767B\u5F55\uFF09`);
+          systemContent += `\u5F53\u524D\u7528\u6237\u672A\u767B\u5F55\u3002\u5F53\u7528\u6237\u8BE2\u95EE\u517B\u751F\u6216\u4F53\u8D28\u76F8\u5173\u65F6\uFF0C\u5FC5\u987B\u56DE\u590D\uFF1A"\u5EFA\u8BAE\u4F60\u5148\u767B\u5F55\u5C0F\u7A0B\u5E8F\u5E76\u5B8C\u6210\u4E2D\u533B\u4F53\u8D28\u6D4B\u8BD5\uFF0C\u80FD\u66F4\u7CBE\u51C6\u5730\u7ED9\u4F60\u5B9A\u5236\u517B\u751F\u5EFA\u8BAE\u54E6\uFF5E\u5B8C\u6210\u6D4B\u8BD5\u540E\uFF0C\u4F60\u53EF\u4EE5\u95EE\u6211\uFF1A1. \u6211\u7684\u4F53\u8D28\u9002\u5408\u5403\u4EC0\u4E48\u6C34\u679C\uFF1F2. \u9488\u5BF9\u6211\u7684\u4F53\u8D28\uFF0C\u65E5\u5E38\u8BE5\u600E\u4E48\u4F5C\u606F\uFF1F"`;
+        } else {
+          console.log(`[AI Chat] \u4F7F\u7528\u901A\u7528\u6A21\u5F0F\uFF08\u5DF2\u767B\u5F55\u4F46\u65E0\u6D4B\u8BC4\u6570\u636E\uFF09`);
+          console.log(`[AI Chat] \u8C03\u8BD5\u4FE1\u606F - ctx.user.id: ${ctx.user.id}`);
+          systemContent += `\u5F53\u524D\u7528\u6237\u5DF2\u767B\u5F55\u4F46\u6682\u672A\u67E5\u8BE2\u5230\u4E2D\u533B\u4F53\u8D28\u6D4B\u8BD5\u7ED3\u679C\u3002\u4F60\u5FC5\u987B\u660E\u786E\u544A\u77E5\uFF1A"\u6682\u672A\u67E5\u8BE2\u5230\u4F60\u7684\u4E2D\u533B\u4F53\u8D28\u6D4B\u8BD5\u7ED3\u679C\uFF0C\u5EFA\u8BAE\u5148\u5B8C\u6210\u6D4B\u8BD5\uFF0C\u6211\u4F1A\u6839\u636E\u4F60\u7684\u4E13\u5C5E\u4F53\u8D28\u7ED9\u4F60\u7CBE\u51C6\u7684\u517B\u751F\u5EFA\u8BAE\uFF5E"\u7136\u540E\u7ED9\u51FA\u5F15\u5BFC\uFF1A"\u5B8C\u6210\u6D4B\u8BD5\u540E\uFF0C\u4F60\u53EF\u4EE5\u95EE\u6211\uFF1A1. \u6211\u7684\u4F53\u8D28\u9002\u5408\u5403\u4EC0\u4E48\u6C34\u679C\uFF1F2. \u9488\u5BF9\u6211\u7684\u4F53\u8D28\uFF0C\u65E5\u5E38\u8BE5\u600E\u4E48\u4F5C\u606F\uFF1F"`;
+        }
+        systemContent += `\u3010\u5F15\u5BFC\u5F0F\u95EE\u7B54\u3011\u6BCF\u6B21\u56DE\u590D\u540E\u5FC5\u987B\u5728\u672B\u5C3E\u7ED9\u51FA2-3\u4E2A\u4E0E\u7528\u6237\u4F53\u8D28\u5F3A\u76F8\u5173\u7684\u5F15\u5BFC\u95EE\u9898\uFF0C\u7528\u6570\u5B57\u5E8F\u53F7\uFF081. 2. 3.\uFF09\u6807\u6CE8\u3002\u683C\u5F0F\u793A\u4F8B\uFF1A"\u9488\u5BF9\u4F60\u7684${finalBodyType || "XX"}\u8D28\uFF0C\u6211\u8FD8\u53EF\u4EE5\u89E3\u7B54\uFF1A1. XX\u8D28\u9002\u5408\u7684\u7761\u524D\u517B\u751F\u5C0F\u52A8\u4F5C\uFF1F2. XX\u8D28\u9002\u5408\u559D\u7684\u6E29\u8865\u517B\u751F\u8336\uFF1F"\u7981\u6B62\u7ED9\u51FA\u672A\u5173\u8054\u4F53\u8D28\u7684\u7A7A\u6CDB\u9009\u9879\uFF08\u5982"\u517B\u751F\u8336\u6709\u54EA\u4E9B\uFF1F"\uFF09\u3002\u82E5\u7528\u6237\u504F\u79BB\u517B\u751F\u4E3B\u9898\uFF0C\u5148\u62C9\u56DE\u5E76\u5173\u8054\u4F53\u8D28\uFF1A"\u54B1\u4EEC\u804A\u804A\u548C\u4F60\u7684[XX\u8D28]\u76F8\u5173\u7684\u517B\u751F\u77E5\u8BC6\u5427\uFF5E\u6BD4\u5982\uFF1A1. XX\u8D28\u79CB\u51AC\u8C03\u7406\u91CD\u70B9\uFF1F2. XX\u8D28\u907F\u514D\u5403\u7684\u98DF\u7269\uFF1F"`;
+        systemContent += `\u3010\u8BED\u6C14\u4E0E\u8868\u8FBE\u3011\u8BED\u8A00\u4EB2\u5207\u81EA\u7136\uFF0C\u907F\u514D\u4E13\u4E1A\u672F\u8BED\u5806\u780C\uFF1B\u82E5\u4F7F\u7528\u4E2D\u533B\u672F\u8BED\u9700\u9644\u5E26\u7B80\u5355\u89E3\u91CA\u3002\u56DE\u590D\u957F\u5EA6\u63A7\u5236\u5728\u5C0F\u7A0B\u5E8F\u5355\u5C4F\u53EF\u9605\u8BFB\u8303\u56F4\u5185\uFF0C\u5F15\u5BFC\u95EE\u9898\u5355\u72EC\u5206\u884C\u3002\u4EE5\u7528\u6237\u4F53\u8D28\u6570\u636E\u4E3A\u6838\u5FC3\uFF0C\u4E0D\u5F3A\u884C\u5F15\u5BFC\uFF1B\u82E5\u7528\u6237\u660E\u786E\u62D2\u7EDD\u67D0\u7C7B\u95EE\u9898\uFF0C\u53CA\u65F6\u8C03\u6574\u65B9\u5411\u4F46\u4ECD\u9700\u5173\u8054\u4F53\u8D28\u3002`;
+        systemContent += `\u56DE\u7B54\u6B63\u6587\u7B80\u6D01\u660E\u4E86\uFF0C\u63A7\u5236\u5728200\u5B57\u4EE5\u5185\u3002`;
         const systemMessage = {
           role: "system",
-          content: `\u4F60\u662F\u4E00\u4F4D\u7ECF\u9A8C\u4E30\u5BCC\u7684\u4E2D\u533B\u4E13\u5BB6\uFF0C\u64C5\u957F\u4F53\u8D28\u8FA8\u8BC6\u548C\u5065\u5EB7\u8C03\u7406\u3002${userInfoText}\u8BF7\u7ED3\u5408\u7528\u6237\u7684\u8FD9\u4E9B\u4FE1\u606F\uFF0C\u7528\u4E13\u4E1A\u4F46\u6613\u61C2\u7684\u8BED\u8A00\u56DE\u7B54\u7528\u6237\u7684\u95EE\u9898\uFF0C\u63D0\u4F9B\u4E2A\u6027\u5316\u7684\u4E2D\u533B\u517B\u751F\u5EFA\u8BAE\u3002\u56DE\u7B54\u8981\u7B80\u6D01\u660E\u4E86\uFF0C\u63A7\u5236\u5728200\u5B57\u4EE5\u5185\u3002`
+          content: systemContent
         };
         const messages = [
           systemMessage,
@@ -1681,9 +2035,45 @@ var appRouter = router({
           }
         }
         const responseContent = result.choices[0]?.message?.content || "\u62B1\u6B49\uFF0C\u6211\u6682\u65F6\u65E0\u6CD5\u56DE\u7B54\u8FD9\u4E2A\u95EE\u9898\u3002";
+        let suggestedQuestions = [];
+        const answerLower = responseContent.toLowerCase();
+        if (answerLower.includes("\u8FD0\u52A8") || answerLower.includes("\u953B\u70BC") || answerLower.includes("\u6D3B\u52A8") || answerLower.includes("\u516B\u6BB5\u9526") || answerLower.includes("\u592A\u6781") || answerLower.includes("\u6162\u8DD1") || answerLower.includes("\u6E38\u6CF3")) {
+          suggestedQuestions = finalBodyType ? [`${finalBodyType}\u9002\u5408\u7684\u65E5\u5E38\u8FD0\u52A8\u6709\u54EA\u4E9B\uFF1F`, `${finalBodyType}\u8FD0\u52A8\u65F6\u8981\u6CE8\u610F\u4EC0\u4E48\uFF1F`, "\u6709\u4EC0\u4E48\u4E0D\u9002\u5408\u7684\u8FD0\u52A8\uFF1F"] : ["\u9002\u5408\u505A\u4EC0\u4E48\u7C7B\u578B\u7684\u8FD0\u52A8\uFF1F", "\u8FD0\u52A8\u65F6\u9700\u8981\u6CE8\u610F\u4EC0\u4E48\uFF1F"];
+        } else if (answerLower.includes("\u98DF\u7269") || answerLower.includes("\u996E\u98DF") || answerLower.includes("\u5403") || answerLower.includes("\u5FCC") || answerLower.includes("\u6E05\u6DE1") || answerLower.includes("\u6CB9\u817B") || answerLower.includes("\u8F9B\u8FA3")) {
+          suggestedQuestions = finalBodyType ? [`${finalBodyType}\u9002\u5408\u7684\u65E9\u9910\u642D\u914D\uFF1F`, "\u6709\u4EC0\u4E48\u5FCC\u53E3\u7684\u5417\uFF1F", "\u53EF\u4EE5\u5403\u54EA\u4E9B\u6C34\u679C\uFF1F"] : ["\u5177\u4F53\u63A8\u8350\u54EA\u4E9B\u98DF\u7269\uFF1F", "\u996E\u98DF\u6709\u4EC0\u4E48\u6CE8\u610F\u4E8B\u9879\uFF1F"];
+        } else if (answerLower.includes("\u7279\u70B9") || answerLower.includes("\u7279\u5F81") || answerLower.includes("\u8868\u73B0") || answerLower.includes("\u75C7\u72B6")) {
+          suggestedQuestions = finalBodyType ? [`${finalBodyType}\u6709\u4EC0\u4E48\u5178\u578B\u8868\u73B0\uFF1F`, "\u4F53\u8D28\u4F1A\u53D8\u5316\u5417\uFF1F", "\u65E5\u5E38\u9700\u8981\u6CE8\u610F\u4EC0\u4E48\uFF1F"] : ["\u8FD9\u79CD\u4F53\u8D28\u6709\u4EC0\u4E48\u75C7\u72B6\uFF1F", "\u9700\u8981\u6CE8\u610F\u4EC0\u4E48\uFF1F"];
+        } else if (answerLower.includes("\u8C03\u7406") || answerLower.includes("\u6539\u5584") || answerLower.includes("\u8C03\u517B") || answerLower.includes("\u6CBB\u7597")) {
+          suggestedQuestions = finalBodyType ? [`${finalBodyType}\u65E5\u5E38\u600E\u4E48\u8C03\u7406\uFF1F`, "\u8C03\u7406\u5927\u6982\u8981\u591A\u4E45\uFF1F", "\u6709\u4EC0\u4E48\u7B80\u5355\u53EF\u575A\u6301\u7684\u65B9\u6CD5\uFF1F"] : ["\u5982\u4F55\u8C03\u7406\u8FD9\u79CD\u4F53\u8D28\uFF1F", "\u6709\u4EC0\u4E48\u5FEB\u901F\u6539\u5584\u7684\u65B9\u6CD5\uFF1F"];
+        } else {
+          if (finalBodyType) {
+            suggestedQuestions = [
+              `${finalBodyType}\u9002\u5408\u7684\u65E5\u5E38\u8FD0\u52A8\u6709\u54EA\u4E9B\uFF1F`,
+              `${finalBodyType}\u9002\u5408\u7684\u65E9\u9910\u6216\u8336\u996E\uFF1F`,
+              `${finalBodyType}\u71AC\u591C\u540E\u8BE5\u600E\u4E48\u8C03\u7406\uFF1F`
+            ];
+          } else {
+            suggestedQuestions = [
+              "\u6211\u7684\u4F53\u8D28\u9002\u5408\u5403\u4EC0\u4E48\u6C34\u679C\uFF1F",
+              "\u9488\u5BF9\u6211\u7684\u4F53\u8D28\uFF0C\u65E5\u5E38\u8BE5\u600E\u4E48\u4F5C\u606F\uFF1F",
+              "\u6709\u4EC0\u4E48\u7B80\u5355\u7684\u517B\u751F\u5C0F\u4E60\u60EF\uFF1F"
+            ];
+          }
+        }
+        suggestedQuestions = suggestedQuestions.slice(0, 3);
+        if (suggestedQuestions.length === 0) {
+          suggestedQuestions = finalBodyType ? [`${finalBodyType}\u6709\u4EC0\u4E48\u7279\u70B9\uFF1F`, `${finalBodyType}\u9002\u5408\u5403\u4EC0\u4E48\uFF1F`] : ["\u6211\u7684\u4F53\u8D28\u6709\u4EC0\u4E48\u7279\u70B9\uFF1F", "\u9002\u5408\u5403\u4EC0\u4E48\u98DF\u7269\uFF1F"];
+        }
+        console.log("[AI Chat] \u8FD4\u56DE\u5F15\u5BFC\u95EE\u9898:", suggestedQuestions);
+        console.log("[AI Chat] \u56DE\u7B54\u5185\u5BB9:", responseContent.substring(0, 100));
         return {
           success: true,
-          content: responseContent
+          content: responseContent,
+          suggestedQuestions,
+          usedLastAssessment,
+          // 是否已使用最后一次测评结果，前端可据此展示「个人订制助手」或「通用养生助手」
+          bodyTypeUsed: finalBodyType ?? void 0
+          // 本次使用的体质类型，便于前端展示
         };
       } catch (error) {
         console.error("[AI Chat] Error:", error);
@@ -1703,7 +2093,13 @@ async function createContext(opts) {
   let adminId = null;
   try {
     user = await sdk.authenticateRequest(opts.req, true);
+    if (user) {
+      console.log(`[Context] \u7528\u6237\u8BA4\u8BC1\u6210\u529F - ID: ${user.id}, openId: ${user.openId.substring(0, 10)}...`);
+    } else {
+      console.log(`[Context] \u7528\u6237\u8BA4\u8BC1\u5931\u8D25 - \u672A\u627E\u5230\u7528\u6237`);
+    }
   } catch (error) {
+    console.log(`[Context] \u7528\u6237\u8BA4\u8BC1\u5F02\u5E38 - ${error instanceof Error ? error.message : String(error)}`);
     user = null;
   }
   const adminIdCookie = opts.req.cookies?.admin_id;
@@ -1750,93 +2146,14 @@ async function createContext(opts) {
   };
 }
 
-// server/_core/vite.ts
+// server/_core/static.ts
 import express from "express";
 import fs from "fs";
-import { nanoid as nanoid2 } from "nanoid";
-import path2 from "path";
-import { createServer as createViteServer } from "vite";
-
-// vite.config.ts
-import { jsxLocPlugin } from "@builder.io/vite-plugin-jsx-loc";
-import tailwindcss from "@tailwindcss/vite";
-import react from "@vitejs/plugin-react";
 import path from "path";
-import { defineConfig } from "vite";
-import { vitePluginManusRuntime } from "vite-plugin-manus-runtime";
-var plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime()];
-var vite_config_default = defineConfig({
-  plugins,
-  resolve: {
-    alias: {
-      "@": path.resolve(import.meta.dirname, "client", "src"),
-      "@shared": path.resolve(import.meta.dirname, "shared"),
-      "@assets": path.resolve(import.meta.dirname, "attached_assets")
-    }
-  },
-  envDir: path.resolve(import.meta.dirname),
-  root: path.resolve(import.meta.dirname, "client"),
-  publicDir: path.resolve(import.meta.dirname, "client", "public"),
-  build: {
-    outDir: path.resolve(import.meta.dirname, "dist/public"),
-    emptyOutDir: true
-  },
-  server: {
-    host: true,
-    allowedHosts: [
-      ".manuspre.computer",
-      ".manus.computer",
-      ".manus-asia.computer",
-      ".manuscomputer.ai",
-      ".manusvm.computer",
-      "localhost",
-      "127.0.0.1"
-    ],
-    fs: {
-      strict: true,
-      deny: ["**/.*"]
-    }
-  }
-});
-
-// server/_core/vite.ts
-async function setupVite(app, server) {
-  const serverOptions = {
-    middlewareMode: true,
-    hmr: { server },
-    allowedHosts: true
-  };
-  const vite = await createViteServer({
-    ...vite_config_default,
-    configFile: false,
-    server: serverOptions,
-    appType: "custom"
-  });
-  app.use(vite.middlewares);
-  app.use("*", async (req, res, next) => {
-    const url = req.originalUrl;
-    try {
-      const clientTemplate = path2.resolve(
-        import.meta.dirname,
-        "../..",
-        "client",
-        "index.html"
-      );
-      let template = await fs.promises.readFile(clientTemplate, "utf-8");
-      template = template.replace(
-        `src="/src/main.tsx"`,
-        `src="/src/main.tsx?v=${nanoid2()}"`
-      );
-      const page = await vite.transformIndexHtml(url, template);
-      res.status(200).set({ "Content-Type": "text/html" }).end(page);
-    } catch (e) {
-      vite.ssrFixStacktrace(e);
-      next(e);
-    }
-  });
-}
+import { fileURLToPath } from "url";
+var __dirname = path.dirname(fileURLToPath(import.meta.url));
 function serveStatic(app) {
-  const distPath = process.env.NODE_ENV === "development" ? path2.resolve(import.meta.dirname, "../..", "dist", "public") : path2.resolve(import.meta.dirname, "public");
+  const distPath = path.resolve(__dirname, "public");
   if (!fs.existsSync(distPath)) {
     console.error(
       `Could not find the build directory: ${distPath}, make sure to build the client first`
@@ -1844,11 +2161,11 @@ function serveStatic(app) {
   }
   app.use(express.static(distPath));
   app.use("*", (_req, res) => {
-    res.sendFile(path2.resolve(distPath, "index.html"));
+    res.sendFile(path.resolve(distPath, "index.html"));
   });
 }
 
-// server/_core/index.ts
+// server/_core/index.prod.ts
 import cookieParser from "cookie-parser";
 
 // server/api/admin-auth.ts
@@ -1977,56 +2294,44 @@ import { Router as Router3 } from "express";
 import axios2 from "axios";
 import https from "https";
 var router4 = Router3();
-
-// 用于存储已使用的 code，防止重复使用
-var usedCodes = new Map();
-var CODE_EXPIRY_MS = 5 * 60 * 1000; // 5分钟过期
-
-// 清理过期的 code
+var usedCodes = /* @__PURE__ */ new Map();
+var CODE_EXPIRY_MS = 5 * 60 * 1e3;
 function cleanupExpiredCodes() {
-  var now = Date.now();
-  for (var [code, data] of usedCodes.entries()) {
+  const now = Date.now();
+  for (const [code, data] of usedCodes.entries()) {
     if (now - data.timestamp > CODE_EXPIRY_MS) {
       usedCodes.delete(code);
     }
   }
 }
-setInterval(cleanupExpiredCodes, 60 * 1000);
-
+setInterval(cleanupExpiredCodes, 60 * 1e3);
 router4.post("/login", async (req, res) => {
-  var requestId = "REQ-" + Date.now() + "-" + Math.random().toString(36).substring(2, 8);
+  const requestId = `REQ-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
   try {
     const { code, userInfo } = req.body;
-    
-    console.log("[WeChat Login][" + requestId + "] ========== 新登录请求 ==========");
-    console.log("[WeChat Login][" + requestId + "] 时间:", new Date().toISOString());
-    console.log("[WeChat Login][" + requestId + "] Code:", code ? code.substring(0, 15) + "..." : "null");
-    
+    console.log(`[WeChat Login][${requestId}] ========== \u65B0\u767B\u5F55\u8BF7\u6C42 ==========`);
+    console.log(`[WeChat Login][${requestId}] \u65F6\u95F4: ${(/* @__PURE__ */ new Date()).toISOString()}`);
+    console.log(`[WeChat Login][${requestId}] Code: ${code?.substring(0, 15)}...`);
     if (!code) {
-      console.error("[WeChat Login][" + requestId + "] 错误: code 为空");
+      console.error(`[WeChat Login][${requestId}] \u9519\u8BEF: code \u4E3A\u7A7A`);
       return res.status(400).json({
         success: false,
         message: "\u5FAE\u4FE1\u767B\u5F55\u51ED\u8BC1 code \u4E0D\u80FD\u4E3A\u7A7A"
       });
     }
-    
-    // 检查 code 是否已被使用（防止重复提交）
-    var usedCodeData = usedCodes.get(code);
+    const usedCodeData = usedCodes.get(code);
     if (usedCodeData) {
-      console.log("[WeChat Login][" + requestId + "] Code 已被使用，返回缓存的 openid:", usedCodeData.openid);
-      
-      var existingUser = await getUserByOpenId(usedCodeData.openid);
-      var cachedSessionToken = await sdk.createSessionToken(usedCodeData.openid, {
+      console.log(`[WeChat Login][${requestId}] Code \u5DF2\u88AB\u4F7F\u7528\uFF0C\u8FD4\u56DE\u7F13\u5B58\u7684 openid: ${usedCodeData.openid}`);
+      const existingUser = await getUserByOpenId(usedCodeData.openid);
+      const sessionToken2 = await sdk.createSessionToken(usedCodeData.openid, {
         name: existingUser?.name || userInfo?.nickName || "",
         expiresInMs: ONE_YEAR_MS
       });
-      
-      var cachedCookieOptions = getSessionCookieOptions(req);
-      res.cookie(COOKIE_NAME, cachedSessionToken, {
-        ...cachedCookieOptions,
+      const cookieOptions2 = getSessionCookieOptions(req);
+      res.cookie(COOKIE_NAME, sessionToken2, {
+        ...cookieOptions2,
         maxAge: ONE_YEAR_MS
       });
-      
       return res.json({
         success: true,
         user: {
@@ -2034,22 +2339,22 @@ router4.post("/login", async (req, res) => {
           name: existingUser?.name || userInfo?.nickName || null,
           avatar: existingUser?.avatar || userInfo?.avatarUrl || null
         },
-        sessionToken: cachedSessionToken,
+        sessionToken: sessionToken2,
         _cached: true
+        // 标记这是缓存的结果
       });
     }
-    
     const WX_APPID = process.env.WX_APPID || "wx04a7af67c8f47620";
     const WX_SECRET = process.env.WX_SECRET || "";
     if (!WX_SECRET) {
-      console.error("[WeChat Login][" + requestId + "] 错误: WX_SECRET 未配置");
+      console.error(`[WeChat Login][${requestId}] \u9519\u8BEF: WX_SECRET \u672A\u914D\u7F6E`);
       return res.status(500).json({
         success: false,
         message: "\u670D\u52A1\u5668\u914D\u7F6E\u9519\u8BEF\uFF0C\u8BF7\u8054\u7CFB\u7BA1\u7406\u5458"
       });
     }
     const wxApiUrl = `https://api.weixin.qq.com/sns/jscode2session?appid=${WX_APPID}&secret=${WX_SECRET}&js_code=${code}&grant_type=authorization_code`;
-    console.log("[WeChat Login][" + requestId + "] 调用微信API, AppID:", WX_APPID);
+    console.log(`[WeChat Login][${requestId}] \u8C03\u7528\u5FAE\u4FE1API, AppID: ${WX_APPID}`);
     const httpsAgent = new https.Agent({
       rejectUnauthorized: false
     });
@@ -2058,17 +2363,16 @@ router4.post("/login", async (req, res) => {
       timeout: 1e4
     });
     const wxData = wxResponse.data;
-    
-    console.log("[WeChat Login][" + requestId + "] 微信API响应:", {
+    console.log(`[WeChat Login][${requestId}] \u5FAE\u4FE1API\u54CD\u5E94:`, {
       hasOpenid: !!wxData.openid,
-      openidPrefix: wxData.openid ? wxData.openid.substring(0, 10) : "N/A",
+      openidPrefix: wxData.openid?.substring(0, 10) || "N/A",
       hasSessionKey: !!wxData.session_key,
+      hasUnionid: !!wxData.unionid,
       errcode: wxData.errcode,
       errmsg: wxData.errmsg
     });
-    
     if (wxData.errcode) {
-      console.error("[WeChat Login][" + requestId + "] 微信API错误:", {
+      console.error(`[WeChat Login][${requestId}] \u5FAE\u4FE1API\u9519\u8BEF:`, {
         errcode: wxData.errcode,
         errmsg: wxData.errmsg
       });
@@ -2088,21 +2392,17 @@ router4.post("/login", async (req, res) => {
         errcode: wxData.errcode
       });
     }
-    const { openid, session_key } = wxData;
+    const { openid, session_key, unionid } = wxData;
     if (!openid) {
-      console.error("[WeChat Login][" + requestId + "] 错误: 未获取到 openid");
+      console.error(`[WeChat Login][${requestId}] \u9519\u8BEF: \u672A\u83B7\u53D6\u5230 openid`);
       return res.status(400).json({
         success: false,
         message: "\u83B7\u53D6\u7528\u6237 openid \u5931\u8D25"
       });
     }
-    
-    // 将 code 标记为已使用
-    usedCodes.set(code, { openid: openid, timestamp: Date.now() });
-    
-    console.log("[WeChat Login][" + requestId + "] 用户 openId:", openid);
-    console.log("[WeChat Login][" + requestId + "] 用户昵称:", userInfo?.nickName || "(未提供)");
-    
+    usedCodes.set(code, { openid, timestamp: Date.now() });
+    console.log(`[WeChat Login][${requestId}] \u7528\u6237 openId: ${openid}`);
+    console.log(`[WeChat Login][${requestId}] \u7528\u6237\u6635\u79F0: ${userInfo?.nickName || "(\u672A\u63D0\u4F9B)"}`);
     try {
       await upsertUser({
         openId: openid,
@@ -2112,9 +2412,9 @@ router4.post("/login", async (req, res) => {
         loginMethod: "wechat_miniprogram",
         lastSignedIn: /* @__PURE__ */ new Date()
       });
-      console.log("[WeChat Login][" + requestId + "] 用户记录已更新");
+      console.log(`[WeChat Login][${requestId}] \u7528\u6237\u8BB0\u5F55\u5DF2\u66F4\u65B0`);
     } catch (dbError) {
-      console.error("[WeChat Login][" + requestId + "] 数据库错误:", {
+      console.error(`[WeChat Login][${requestId}] \u6570\u636E\u5E93\u9519\u8BEF:`, {
         message: dbError?.message,
         code: dbError?.code
       });
@@ -2124,16 +2424,13 @@ router4.post("/login", async (req, res) => {
       name: userInfo?.nickName || "",
       expiresInMs: ONE_YEAR_MS
     });
-    console.log("[WeChat Login][" + requestId + "] Session token 已创建");
-    
+    console.log(`[WeChat Login][${requestId}] Session token \u5DF2\u521B\u5EFA`);
     const cookieOptions = getSessionCookieOptions(req);
     res.cookie(COOKIE_NAME, sessionToken, {
       ...cookieOptions,
       maxAge: ONE_YEAR_MS
     });
-    
-    console.log("[WeChat Login][" + requestId + "] 登录成功, openId:", openid);
-    
+    console.log(`[WeChat Login][${requestId}] \u767B\u5F55\u6210\u529F, openId: ${openid}`);
     return res.json({
       success: true,
       user: {
@@ -2144,18 +2441,16 @@ router4.post("/login", async (req, res) => {
       sessionToken
     });
   } catch (error) {
-    console.error("[WeChat Login][" + requestId + "] 异常:", error.message);
+    console.error(`[WeChat Login][${requestId}] \u5F02\u5E38:`, error.message);
     return res.status(500).json({
       success: false,
       message: error.message || "\u767B\u5F55\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5"
     });
   }
 });
-
-// 调试接口：获取当前 session 信息
 router4.get("/debug-session", async (req, res) => {
   try {
-    var user = await sdk.authenticateRequest(req, true);
+    const user = await sdk.authenticateRequest(req, true);
     if (user) {
       return res.json({
         authenticated: true,
@@ -2170,7 +2465,7 @@ router4.get("/debug-session", async (req, res) => {
     } else {
       return res.json({
         authenticated: false,
-        message: "未登录或 session 无效"
+        message: "\u672A\u767B\u5F55\u6216 session \u65E0\u6548"
       });
     }
   } catch (error) {
@@ -2180,10 +2475,9 @@ router4.get("/debug-session", async (req, res) => {
     });
   }
 });
-
 var wechat_login_default = router4;
 
-// server/_core/index.ts
+// server/_core/index.prod.ts
 function isPortAvailable(port) {
   return new Promise((resolve) => {
     const server = net.createServer();
@@ -2218,11 +2512,7 @@ async function startServer() {
       createContext
     })
   );
-  if (process.env.NODE_ENV === "development") {
-    await setupVite(app, server);
-  } else {
-    serveStatic(app);
-  }
+  serveStatic(app);
   const preferredPort = parseInt(process.env.PORT || "3000");
   const port = await findAvailablePort(preferredPort);
   if (port !== preferredPort) {

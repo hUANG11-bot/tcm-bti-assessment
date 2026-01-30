@@ -1,130 +1,3 @@
-// server/_core/polyfill-node16.ts
-function installPolyfills() {
-  if (typeof globalThis.WritableStream === "undefined") {
-    globalThis.WritableStream = class WritableStream {
-      _sink;
-      _state = "writable";
-      _writer = null;
-      constructor(underlyingSink) {
-        this._sink = underlyingSink ?? {};
-      }
-      getWriter() {
-        if (this._writer) throw new Error("Writer already locked");
-        const stream = this;
-        this._writer = {
-          write(chunk) {
-            if (stream._state !== "writable") return Promise.resolve();
-            return stream._sink?.write?.(chunk) ?? Promise.resolve();
-          },
-          close() {
-            if (stream._state !== "writable") return Promise.resolve();
-            stream._state = "closed";
-            return stream._sink?.close?.() ?? Promise.resolve();
-          }
-        };
-        return this._writer;
-      }
-    };
-  }
-  if (typeof globalThis.Headers === "undefined") {
-    globalThis.Headers = class Headers {
-      map = /* @__PURE__ */ new Map();
-      constructor(init) {
-        if (init) {
-          if (Array.isArray(init)) {
-            init.forEach(([k, v]) => this.map.set(k.toLowerCase(), String(v)));
-          } else if (typeof init === "object" && init !== null) {
-            Object.entries(init).forEach(([k, v]) => this.map.set(k.toLowerCase(), String(v)));
-          }
-        }
-      }
-      get(name) {
-        return this.map.get(name.toLowerCase()) ?? null;
-      }
-      has(name) {
-        return this.map.has(name.toLowerCase());
-      }
-      set(name, value) {
-        this.map.set(name.toLowerCase(), value);
-      }
-      append(name, value) {
-        const k = name.toLowerCase();
-        const prev = this.map.get(k);
-        this.map.set(k, prev ? `${prev}, ${value}` : value);
-      }
-      forEach(cb) {
-        this.map.forEach(cb);
-      }
-      entries() {
-        return this.map.entries();
-      }
-      keys() {
-        return this.map.keys();
-      }
-      values() {
-        return this.map.values();
-      }
-      [Symbol.iterator]() {
-        return this.map.entries();
-      }
-    };
-  }
-  if (typeof globalThis.Request === "undefined") {
-    const GHeaders = globalThis.Headers;
-    globalThis.Request = class Request {
-      url;
-      method;
-      headers;
-      body;
-      signal;
-      constructor(input, init) {
-        this.url = typeof input === "string" ? input : input.toString();
-        this.method = (init?.method ?? "GET").toUpperCase();
-        this.body = init?.body;
-        this.signal = init?.signal;
-        if (init?.headers instanceof GHeaders) {
-          this.headers = init.headers;
-        } else {
-          this.headers = new GHeaders(init?.headers ?? {});
-        }
-      }
-    };
-  }
-  if (typeof globalThis.Response === "undefined") {
-    const GHeaders = globalThis.Headers;
-    globalThis.Response = class Response {
-      body;
-      status;
-      statusText;
-      headers;
-      ok;
-      constructor(body, init) {
-        this.status = init?.status ?? 200;
-        this.statusText = init?.statusText ?? "";
-        this.ok = this.status >= 200 && this.status < 300;
-        if (init?.headers instanceof GHeaders) {
-          this.headers = init.headers;
-        } else {
-          this.headers = new GHeaders(init?.headers ?? {});
-        }
-        if (body != null && body !== "") {
-          const chunk = new TextEncoder().encode(body);
-          this.body = {
-            pipeTo(dest, _opts) {
-              const writer = dest.getWriter();
-              if (_opts?.signal?.aborted) return Promise.resolve();
-              return writer.write(chunk);
-            }
-          };
-        } else {
-          this.body = null;
-        }
-      }
-    };
-  }
-}
-installPolyfills();
-
 // server/_core/index.prod.ts
 import "dotenv/config";
 import express2 from "express";
@@ -1971,12 +1844,8 @@ var appRouter = router({
             }
           }
         }
-        if (!userInfoParts.some((p) => p.includes("\u5E74\u9F84"))) {
-          if (finalAge != null && finalAge > 0) {
-            userInfoParts.push(`\u5E74\u9F84\uFF1A${finalAge}\u5C81`);
-          } else {
-            userInfoParts.push(`\u5E74\u9F84\uFF1A\u672A\u5728\u6D4B\u8BC4\u4E2D\u8BB0\u5F55\uFF08\u82E5\u7528\u6237\u95EE\u300C\u6211\u7684\u5E74\u9F84\u300D\uFF0C\u8BF7\u8BF4\u660E\u5F53\u524D\u672A\u8BB0\u5F55\u5E76\u5EFA\u8BAE\u5728\u4E2A\u4EBA\u4E2D\u5FC3\u5B8C\u5584\u6216\u91CD\u65B0\u505A\u4F53\u8D28\u6D4B\u8BC4\uFF09`);
-          }
+        if (finalAge && !userInfoParts.some((p) => p.includes("\u5E74\u9F84"))) {
+          userInfoParts.push(`\u5E74\u9F84\uFF1A${finalAge}\u5C81`);
         }
         if (finalGender && !userInfoParts.some((p) => p.includes("\u6027\u522B"))) {
           userInfoParts.push(`\u6027\u522B\uFF1A${finalGender}`);
@@ -2091,13 +1960,12 @@ var appRouter = router({
           console.log(`[AI Chat] \u4F7F\u7528\u4E2A\u6027\u5316\u6A21\u5F0F\uFF08\u5DF2\u8C03\u53D6\u6700\u540E\u4E00\u6B21\u6D4B\u8BC4\u7ED3\u679C\uFF09`);
           const dataSource = isFromHistory ? "\u7528\u6237\u9009\u62E9\u7684\u6D4B\u8BC4\u8BB0\u5F55" : isLoggedIn ? "\u7528\u6237\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BD5" : "\u524D\u7AEF\u4F20\u5165\u7684\u6D4B\u8BC4\u6570\u636E";
           if (userInfoText) {
-            systemContent += `${userInfoText}\u5F53\u7528\u6237\u8BE2\u95EE\u5E74\u9F84\u3001\u6027\u522B\u3001\u4F53\u8D28\u7C7B\u578B\u7B49\u57FA\u672C\u4FE1\u606F\u65F6\uFF0C\u8BF7\u6839\u636E\u4E0A\u8FF0\u4FE1\u606F\u56DE\u7B54\u3002\u82E5\u4E0A\u8FF0\u5DF2\u5199\u660E\u300C\u5E74\u9F84\uFF1A\u672A\u5728\u6D4B\u8BC4\u4E2D\u8BB0\u5F55\u300D\uFF0C\u5F53\u7528\u6237\u95EE\u300C\u6211\u7684\u5E74\u9F84\u300D\u65F6\uFF0C\u8BF7\u53CB\u597D\u8BF4\u660E\uFF1A\u5F53\u524D\u672A\u8BB0\u5F55\u60A8\u7684\u5E74\u9F84\uFF0C\u5EFA\u8BAE\u5728\u4E2A\u4EBA\u4E2D\u5FC3\u5B8C\u5584\u4FE1\u606F\u6216\u91CD\u65B0\u505A\u4E00\u6B21\u4F53\u8D28\u6D4B\u8BC4\uFF0C\u4EE5\u4FBF\u63D0\u4F9B\u66F4\u7CBE\u51C6\u7684\u5EFA\u8BAE\uFF1B\u4E0D\u8981\u8BF4\u300C\u6211\u9700\u8981\u4E86\u89E3\u60A8\u7684\u5E74\u9F84\u300D\u6216\u300C\u8BF7\u544A\u8BC9\u6211\u60A8\u7684\u5E74\u9F84\u300D\u3002\u82E5\u5DF2\u5199\u660E\u5177\u4F53\u5E74\u9F84/\u6027\u522B\uFF0C\u5219\u76F4\u63A5\u56DE\u7B54\uFF08\u6765\u81EA${dataSource}\uFF09\u3002`;
+            systemContent += `${userInfoText}\u5F53\u7528\u6237\u8BE2\u95EE\u5E74\u9F84\u3001\u6027\u522B\u3001\u4F53\u8D28\u7C7B\u578B\u7B49\u57FA\u672C\u4FE1\u606F\u65F6\uFF0C\u8BF7\u76F4\u63A5\u6839\u636E\u4E0A\u8FF0\u4FE1\u606F\u56DE\u7B54\u3002\u4F8B\u5982\uFF0C\u5982\u679C\u7528\u6237\u95EE"\u6211\u7684\u5E74\u9F84\u662F\u591A\u5C11"\u6216"\u6211\u7684\u6027\u522B\u662F"\uFF0C\u4F60\u5E94\u8BE5\u76F4\u63A5\u56DE\u7B54\u5177\u4F53\u7684\u5E74\u9F84\u548C\u6027\u522B\uFF08\u8FD9\u4E9B\u4FE1\u606F\u6765\u81EA${dataSource}\uFF09\uFF0C\u4E0D\u8981\u8BF4"\u6211\u65E0\u6CD5\u83B7\u53D6"\u6216"\u8BF7\u544A\u8BC9\u6211"\u4E4B\u7C7B\u7684\u8BDD\u3002`;
           } else {
             if (finalBodyType) {
               const sourceDesc = isFromHistory ? "\u6839\u636E\u60A8\u9009\u62E9\u7684\u6D4B\u8BC4\u8BB0\u5F55" : "\u6839\u636E\u60A8\u6700\u8FD1\u4E00\u6B21\u6D4B\u8BC4\u7ED3\u679C";
               systemContent += `${sourceDesc}\uFF0C\u60A8\u7684\u4F53\u8D28\u7C7B\u578B\u662F${finalBodyType}${finalSecondaryType ? `\uFF0C\u517C\u6709${finalSecondaryType}` : ""}\u3002`;
-              if (finalAge != null && finalAge > 0) systemContent += `\u5E74\u9F84${finalAge}\u5C81\u3002`;
-              else systemContent += `\u5E74\u9F84\u672A\u8BB0\u5F55\uFF08\u7528\u6237\u8BE2\u95EE\u65F6\u8BF7\u63D0\u793A\u5B8C\u5584\u6216\u91CD\u65B0\u6D4B\u8BC4\uFF09\u3002`;
+              if (finalAge) systemContent += `\u5E74\u9F84${finalAge}\u5C81\u3002`;
               if (finalGender) systemContent += `\u6027\u522B${finalGender}\u3002`;
             }
           }
@@ -2277,23 +2145,12 @@ async function createContext(opts) {
 import express from "express";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
-var __dirname;
-try {
-  __dirname = path.dirname(fileURLToPath(import.meta.url));
-} catch {
-  __dirname = process.cwd();
-}
 function serveStatic(app) {
-  let distPath = path.resolve(__dirname, "public");
-  if (!distPath || !fs.existsSync(distPath)) {
-    distPath = path.join(process.cwd(), "dist", "public");
-  }
-  if (!distPath || !fs.existsSync(distPath)) {
+  const distPath = path.resolve(import.meta.dirname, "public");
+  if (!fs.existsSync(distPath)) {
     console.error(
-      `[serveStatic] Could not find build directory (tried ${distPath}), skipping static middleware`
+      `Could not find the build directory: ${distPath}, make sure to build the client first`
     );
-    return;
   }
   app.use(express.static(distPath));
   app.use("*", (_req, res) => {

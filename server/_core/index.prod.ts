@@ -3,6 +3,9 @@
  * node_modules/vite 时报错（如 node:fs/promises constants）。
  * 开发环境请用 server/_core/index.ts（pnpm dev）。
  */
+/** 必须在任何其他 import 之前执行，为 Node 16 提供 Headers/Request polyfill */
+import "./polyfill-node16";
+
 import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
@@ -42,10 +45,9 @@ async function startServer() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   app.use(cookieParser());
+  // 更具体的 /api/* 路由必须先挂载，避免被 /api 的 historyRouter 拦截导致 404 或 write after end
   app.use("/api/admin", adminAuthRouter);
-  app.use("/api", historyRouter);
   app.use("/api/wechat", wechatLoginRouter);
-  registerOAuthRoutes(app);
   app.use(
     "/api/trpc",
     createExpressMiddleware({
@@ -53,6 +55,8 @@ async function startServer() {
       createContext,
     })
   );
+  app.use("/api", historyRouter);
+  registerOAuthRoutes(app);
   serveStatic(app);
 
   const preferredPort = parseInt(process.env.PORT || "3000");

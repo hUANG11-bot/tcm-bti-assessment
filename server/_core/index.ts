@@ -39,15 +39,9 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   // Cookie parser for admin authentication
   app.use(cookieParser());
-  // REST API for admin authentication
+  // 更具体的 /api/* 路由必须先挂载，避免被 /api 的 historyRouter 拦截导致 404 或 write after end
   app.use("/api/admin", adminAuthRouter);
-  // REST API for history records
-  app.use("/api", historyRouter);
-  // REST API for WeChat mini-program login
   app.use("/api/wechat", wechatLoginRouter);
-  // OAuth callback under /api/oauth/callback
-  registerOAuthRoutes(app);
-  // tRPC API
   app.use(
     "/api/trpc",
     createExpressMiddleware({
@@ -55,6 +49,9 @@ async function startServer() {
       createContext,
     })
   );
+  app.use("/api", historyRouter);
+  // OAuth callback under /api/oauth/callback
+  registerOAuthRoutes(app);
   // development mode uses Vite (dynamic import so production never loads Vite/Node 18+ deps), production uses static files
   if (process.env.NODE_ENV === "development") {
     const { setupVite } = await import("./vite");
